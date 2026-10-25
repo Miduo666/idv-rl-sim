@@ -1,0 +1,37 @@
+
+==========================================================================================
+FILE: core/AntiMemModifyMgr.py.marshal
+==========================================================================================
+co_filename: core/AntiMemModifyMgr.py
+def <module>(args=0)  vars=[]
+  .names/attrs: ['game_kernel', 'GK', 'struct', 'random', 'common_cs', 'ComuKeys', 'common_cs.combat_core.enum_types.ComponentType', 'UnitComponentType', 'MEMORY_VARS', 'object', 'AntiMemModifyMgr']
+  str: 'AntiMemModifyMgr'
+  nums/bytes: [0]
+    def AntiMemModifyMgr(args=0)  vars=[]
+      .names/attrs: ['__name__', '__module__', '__qualname__', '__init__', 'init', 'generate_modify_vars', 'check_modify_result', 'anti_mem_modify']
+      str: 'AntiMemModifyMgr'
+        def AntiMemModifyMgr.__init__(args=1)  vars=['self']
+          .names/attrs: ['modify_result', 'all_data_result', 'all_data_checksum', 'origin_data', 'generate_modify_vars', 'GK', 'g_async_mgr', 'callback', 'check_handler']
+          nums/bytes: [b'', 0, 20]
+            def AntiMemModifyMgr.__init__.<locals>.<lambda>(args=0)  vars=[]
+              .names/attrs: ['anti_mem_modify']
+        def AntiMemModifyMgr.init(args=1)  vars=['self']
+          .names/attrs: ['modify_result', 'all_data_result', 'all_data_checksum', 'origin_data', 'generate_modify_vars']
+          nums/bytes: [b'', 0]
+        def AntiMemModifyMgr.generate_modify_vars(args=1)  vars=['self', 'double_base_info', 'info', 'k', 'v', 'cur_modifi', 'cur_hex', 'i', 'value', 'cur_add', 'cksum', 'key']
+          .names/attrs: ['struct', 'pack', 'MEMORY_VARS', 'bytes', 'fromhex', 'range', 'random', 'randint', 'sum', 'bytearray', 'all_data_result', 'append', 'len', 'origin_data', 'modify_result', 'all_data_checksum']
+          str: 'I'
+          str: 'd'
+          str: '<'
+          nums/bytes: [0, 15, 25, b'', 3, 1]
+        def AntiMemModifyMgr.check_modify_result(args=1)  vars=['self', 'index', 'cur_list_value', 'cur_value', 'value', 'checksum', 'cur_sum']
+          .names/attrs: ['all_data_checksum', 'range', 'len', 'modify_result', 'sum', 'bytearray', 'origin_data']
+          nums/bytes: [0]
+        def AntiMemModifyMgr.anti_mem_modify(args=1)  vars=['self', 'bw', 'modified', 'index', 'ori_data', 'info', 'comp']
+          .names/attrs: ['check_handler', 'GK', 'g_world_mgr', 'battle_world', 'is_battle_client', 'battle_event', 'g_unit', 'check_modify_result', 'ComuKeys', 'ANTI_CHEAT_TYPE', 'MEM_MODIFY', 'get_combat_component', 'UnitComponentType', 'CombatVoice', 'send_battle_event_safe', 'g_async_mgr', 'callback']
+          str: 'key'
+          str: 'speed_info'
+          str: 'index'
+          nums/bytes: [20]
+            def AntiMemModifyMgr.anti_mem_modify.<locals>.<lambda>(args=0)  vars=[]
+              .names/attrs: ['anti_mem_modify']

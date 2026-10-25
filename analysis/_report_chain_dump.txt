@@ -1,0 +1,45 @@
+# 反作弊上报链路 原始 dump (2026-10-15)
+## GameYW(PC checker) + Channel(report wiring)
+
+##### core__sdk__GameYW.pyc.marshal
+ FUNC GameYW
+   names: ['__name__', '__module__', '__qualname__', 'init_env_sdk', 'init_pc_anti_cheat_checker']
+   nums: []
+   strs: ['GameYW']
+ FUNC GameYW.init_pc_anti_cheat_checker
+   names: ['PlatformUtil', 'is_pc', 'profiling', 'hasattr', 'set_game_checker_interval', 'const', 'V_FRAME_RATE', 'remain_logger', 'info', 'simplejson', 'GK', 'g_avatar', 'clear_ac_extra_params', 'set_ac_extra_param', 'str', 'g_log_mgr', 'server_hostnum', 'player_name', 'set_game_checker_cheat_cb']
+   nums: [0, 600]
+   strs: ['set_game_checker_interval', 'set_ac_extra_param', '[AC] start', 'role_id', 'server', 'role_name']
+ FUNC GameYW.init_pc_anti_cheat_checker.<locals>._log
+   names: ['GK', 'g_avatar', 'remain_logger', 'info', 'loads', 'call_server_method', 'BaseException']
+   nums: []
+   strs: ['[AC] cb, type=%s', 'log_pc_anti_cheat_check_info', 'info']
+ FUNC PlayerAvatarMember.__init__
+   names: ['windows_checkinline_switch', 'sys', 'maxsize', 'is_64bit', 'EngineFunctionMgr', 'instance', 'is_function_ok', 'ENGINE_FUNCTION', 'QSEC_SDK', 'PlatformUtil', 'is_win32', 'last_time']
+   nums: [4294967296]
+   strs: []
+ FUNC PlayerAvatarMember.TimerCheckWindowsApiHook
+   names: ['time', 'range', 'len', 'CheckInlinHook', 'append', 'GK', 'g_log_mgr', 'log_qsec_check_info', 'str']
+   nums: [0]
+   strs: ['Kernel32.dll', 'QSecInlineHook']
+
+##### core__sdk__Channel.pyc.marshal
+ FUNC Channel
+   names: ['__name__', '__module__', '__qualname__', '_init_channel_component', 'set_confirm_login_result', 'get_confirm_login_result', 'set_dmm_prop_str', 'enter_game', '_enter_game_check', 'do_enter_game', 'ns_connect', 'token_life_out', 'login', '_need_force_relogin', 'on_should_auto_login_callback', 'on_login_channel_selected', '_real_login', '_real_login_after_change_channel', '_login_callback', '_process_huawei_guest_login_cb', '_login_callback_failed', '_login_failed_need_kick_server', 'check_sdk_real_login', '_do_netease_global_pc_login_callback', 'get_dmm_viewer_id', '_do_dmm_pc_login_callback', '_do_netease_pc_login_callback', '_do_login_callback', 'set_sauth_result', 'on_daren_updated_callback', '_update_daren_ui', 'is_daren_updated', 'logout', 'recover_prop_info_before_relogin', '_logout_callback', '_logout_callback_need_kick_server', 'init_channel_cbg_prop', 'cbg_login_authorize', '_on_manager_view_closed', 'init_anti_cheat_report', 'get_privacy_encode_data', 'open_personal_privacy_page', 'open_third_channel_information_page', 'open_collected_information_page']
+   nums: []
+   strs: ['Channel']
+ FUNC Channel._logout_callback
+   names: ['remain_logger', 'info', 'GK', 'g_log_mgr', 'log_unisdk_logout_callback', 'profiling', 'hasattr', 'clear_game_checker_info', 'init_anti_cheat_report', 'common_cs.h55_utils.utils_channel', 'UtilsChannel', 'is_huawei_guest_available', 'g_ui_mgr', 'get_ui', 'update_guest_btn_show', 'unisdk', 'LOGOUT_DONE_OK', 'has_login', '_logout_callback_need_kick_server', 'utils', 'do_back_to_login']
+   nums: [0, 3]
+   strs: ['[_logout_callback] code=%s', 'clear_game_checker_info', 'UILogin', 'sdk_logout_cb']
+ FUNC Channel.init_anti_cheat_report
+   names: ['profiling', 'core.EngineFunctionMgr', 'EngineFunctionMgr', 'hasattr', 'GK', 'g_sdk_mgr', 'get_app_channel', 'instance', 'get_engine_version', 'join', 'items', 'get_game_checker_report_with_info', 'get_game_checker_report', 'set_game_checker_info']
+   nums: [0]
+   strs: ['get_game_checker_report_http_update', 'get_game_checker_report_by_http', 'get_game_checker_report_with_info', 'libclient.so', ',', 'get_game_checker_report', 'mainModule', 'app_channel', 'app_version']
+ FUNC Channel.init_anti_cheat_report.<locals>._cb
+   names: ['remain_logger', 'info']
+   nums: []
+   strs: ['[init_anti_cheat_report]']
+
+## Avatar(mobile acsdk 上报主通道)
+/usr/bin/bash: line 1:  1794 Segmentation fault      python drivers/acdump3.py "anti_cheat,acsdk,log_mobile,gameyw,report,sign" strip/entities__Avatar.pyc.marshal 2>&1

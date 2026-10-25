@@ -1,0 +1,188 @@
+
+==========================================================================================
+FILE: common_cs/SecurityUtil.py.marshal
+==========================================================================================
+co_filename: common_cs/SecurityUtil.py
+def <module>(args=0)  vars=[]
+  .names/attrs: ['common_cs', 'ComuKeys', 'MATCH_TYPE', 'COPYCAT', 'COPYCAT_ADVANCE', 'COPYCAT_CARNIVAL', 'COPYCAT_ROLE_SELECT', 'COPYCAT_MATCH_TYPES', 'INVITE_TYPE', 'COPYCAT_INVITE_TYPES', 'RECRUIT_GAME_TYPE', 'COPYCAT_RECRUIT_TYPES', 'is_copycat_game', 'is_copycat_match', 'is_copycat_invite', 'is_copycat_recruit', 'SOCIAL_INFO_KEY', 'SWITCH_CLOTH_SHARE', 'SECURITY_OP', 'SHARE_CLOTH', 'CHAT_SERVER_STORE', 'MAP_SWITCH2SOP']
+  nums/bytes: [0]
+    def is_copycat_game(args=1)  vars=['game_type']
+      .names/attrs: ['ComuKeys', 'GAME_TYPE', 'COPYCAT']
+    def is_copycat_match(args=1)  vars=['match_type']
+      .names/attrs: ['COPYCAT_MATCH_TYPES']
+    def is_copycat_invite(args=1)  vars=['invite_type']
+      .names/attrs: ['COPYCAT_INVITE_TYPES']
+    def is_copycat_recruit(args=1)  vars=['recruit_type']
+      .names/attrs: ['COPYCAT_RECRUIT_TYPES']
+
+==========================================================================================
+FILE: entities/logic/SecurityLogic.py.marshal
+==========================================================================================
+co_filename: entities/logic/SecurityLogic.py
+def <module>(args=0)  vars=[]
+  .names/attrs: ['time', 'common_cs', 'ComuKeys', 'common_tools.TimeCheck', 'TimeCheck', 'common_cs.GenUtil', 'coroutine', 'GEN_RPC_SUCCESS', 'GenReturn', 'Future', 'core.EventDispatcher', 'EVENT_TYPES', 'mbengine.common.IdManager', 'IdManager', 'game_kernel', 'GK', 'etc', 'pack_config', 'common_tools', 'utils', 'object', 'SecurityLogic']
+  str: 'SecurityLogic'
+  nums/bytes: [0]
+    def SecurityLogic(args=0)  vars=[]
+      .names/attrs: ['__name__', '__module__', '__qualname__', 'init_security', 'property', 'security_lock_gm', 'sp_switches', 'security_log', 'security_log_reply_info', 'clear_security_verification_callback', 'add_security_verification_callback', 'pop_security_verification_callback', 'ComuKeys', 'SECURITY_OP', 'OTHER', 'verification_ui', 'some_security_operation', 'some_security_operation_cb', 'check_force_reset_time_end', 'check_sp_existing', 'check_sp_free', 'is_operation_locked', 'need_check_sp', 'check_sp_main_open', 'check_sp', 'reply_check_sp', 'coroutine', 'set_secondary_password_switch', 'is_sp_switch_on', 'call_server_security_method', 'security_rpc_return', 'sync_security_info', 'sync_security_info_rpc', 'set_secondary_password', 'reset_secondary_password', 'modify_secondary_password', 'sp_free_open', 'sp_free_close', 'force_reset_sp', 'undo_force_reset_sp', 'request_send_sms_security', 'get_can_send_sms_security_left_time', 'request_force_reset_sp_by_sms', 'risk_control_info', 'is_under_risk_control', 'check_secondary_password_async_simple']
+      str: 'SecurityLogic'
+      str: '123456aa'
+      str: 'no check'
+        def SecurityLogic.init_security(args=1)  vars=['self']
+          .names/attrs: ['avatar_dict', 'get', 'security_info', 'security_verification_callbacks', 'ComuKeys', 'SECURITY_OP', 'CHAT_LOBBY', 'CHAT_FRIEND', 'security_lock_key', 'send_sms_security_cd_end_ts']
+          str: 'security_info'
+          str: 'chat_lobby_lock'
+          str: 'chat_friend_lock'
+          nums/bytes: [0]
+        def SecurityLogic.<lambda>(args=1)  vars=['self']
+          .names/attrs: ['security_info', 'setdefault']
+          str: 'security_lock_gm'
+        def SecurityLogic.sp_switches(args=1)  vars=['self']
+          .names/attrs: ['security_info', 'setdefault', 'ComuKeys', 'SECURITY_KEY', 'SP_SWITCHES']
+        def SecurityLogic.security_log(args=2)  vars=['self', 'fmt', 'args']
+          .names/attrs: ['pack_config', 'is_debug_mode']
+        def SecurityLogic.security_log_reply_info(args=3)  vars=['self', 'func', 'info', 'success']
+          .names/attrs: ['get', 'security_log', 'str']
+          str: 'result'
+          str: '%s result: %s'
+          str: 'return_info: %s'
+        def SecurityLogic.clear_security_verification_callback(args=2)  vars=['self', 'op', 'dct', 'pressure_len', 'now', 'uk_life_cycle', 'new_dct', 'key', 'cb', 'timestamp']
+          .names/attrs: ['security_log', 'security_verification_callbacks', 'setdefault', 'len', 'str', 'TimeCheck', 'get_time', 'GK', 'DM', 'global_data', 'get', 'items', 'update', 'clear']
+          str: 'clear_security_verification_callback'
+          str: 'clear callback start,op: %s dct: %s'
+          str: 'uk_life_cycle'
+          str: 'clear callback end,op: %s dct: %s'
+          nums/bytes: [6, 5, 0]
+        def SecurityLogic.add_security_verification_callback(args=4)  vars=['self', 'op', 'uni_key', 'cb', 'dct', 'max_len']
+          .names/attrs: ['security_log', 'clear_security_verification_callback', 'security_verification_callbacks', 'setdefault', 'len', 'update', 'TimeCheck', 'get_time', 'str']
+          str: 'add_security_verification_callback'
+          str: 'add_security_verification_callback dict: %s'
+          nums/bytes: [10]
+        def SecurityLogic.pop_security_verification_callback(args=3)  vars=['self', 'op', 'uni_key', 'dct', 'cb', 'time']
+          .names/attrs: ['security_log', 'str', 'security_verification_callbacks', 'setdefault', 'pop']
+          str: 'pop_security_verification_callback dict: %s'
+          str: 'pop op: %s, uk: %s, cb: %s, time: %s'
+        def SecurityLogic.verification_ui(args=4)  vars=['self', 'cb', 'test_pwd', 'op']
+          .names/attrs: ['check_sp']
+        def SecurityLogic.some_security_operation(args=2)  vars=['self', 'test_pwd']
+          .names/attrs: ['need_check_sp', 'verification_ui', 'str', 'some_security_operation_cb']
+            def SecurityLogic.some_security_operation.<locals>.<lambda>(args=1)  vars=['uk']
+              .names/attrs: ['some_security_operation_cb']
+              str: 'checked'
+        def SecurityLogic.some_security_operation_cb(args=3)  vars=['self', 'uk', 'info']
+          .names/attrs: ['security_log', 'call_server_method', 'str']
+          str: 'check? %s, uk: %s'
+          str: 'some_security_operation'
+          str: 'uni_key'
+        def SecurityLogic.check_force_reset_time_end(args=1)  vars=['self', 'force_reset_time', 'fct']
+          .names/attrs: ['GK', 'DM', 'global_data', 'get', 'security_info', 'ComuKeys', 'SECURITY_KEY', 'FORCE_RESET_TIME', 'TimeCheck', 'get_int_time']
+          str: 'sp_force_reset_time'
+          nums/bytes: [0]
+        def SecurityLogic.check_sp_existing(args=1)  vars=['self']
+          .names/attrs: ['security_info', 'get', 'ComuKeys', 'SECURITY_KEY', 'SECONDARY_PASSWORD']
+        def SecurityLogic.check_sp_free(args=2)  vars=['self', 'op', 'sp_free_time', 'spf', 'lvt']
+          .names/attrs: ['ComuKeys', 'SECURITY_OP', 'MIGRATION', 'GK', 'DM', 'global_data', 'get', 'security_info', 'SECURITY_KEY', 'IS_SP_FREE', 'LAST_VERIFICATION_TIME', 'COPYCAT', 'TimeCheck', 'get_int_time']
+          str: 'sp_free_time'
+          nums/bytes: [0, 0.0]
+        def SecurityLogic.is_operation_locked(args=2)  vars=['self', 'op', 'conf', 'key', 'gm_lock_expired']
+          .names/attrs: ['GK', 'DM', 'secondary_password_config', 'security_lock_key', 'bool', 'get', 'security_lock_gm', 'TimeCheck', 'get_int_time']
+          str: 'is_valid'
+          nums/bytes: [1]
+        def SecurityLogic.need_check_sp(args=2)  vars=['self', 'op', 'sp_sys_open', 'sp_exist', 'force_reset_done', 'sp_free', 'is_locking']
+          .names/attrs: ['is_sp_switch_on', 'GK', 'DM', 'is_sys_open', 'ComuKeys', 'DC_MODULE_LOCK_KEY', 'SECOND_PASSWORD', 'check_sp_existing', 'check_force_reset_time_end', 'check_sp_free', 'is_operation_locked']
+        def SecurityLogic.check_sp_main_open(args=1)  vars=['self']
+          .names/attrs: ['check_sp_existing', 'check_force_reset_time_end']
+        def SecurityLogic.check_sp(args=5)  vars=['self', 'pwd', 'yes_cb', 'op', 'ext_params', 'uk', 'kwargs', 'success']
+          .names/attrs: ['str', 'IdManager', 'genid', 'update', 'add_security_verification_callback', 'security_log', 'security_verification_callbacks', 'call_server_security_method']
+          str: 'add_security_verification_callback full'
+          str: 'op: %s, dct: %s'
+          str: 'check_sp'
+          str: 'kwargs'
+        def SecurityLogic.reply_check_sp(args=2)  vars=['self', 'info', 'success', 'op', 'uk', 'ui_secondary_password', 'return_state', 'other_pwd_open', 'cs_utils', 'other_server_tid', 'up_info', 'yes_cb', 'time']
+          .names/attrs: ['security_log_reply_info', 'get', 'ComuKeys', 'SECURITY_OP', 'OTHER', 'GK', 'g_ui_mgr', 'get_ui', 'pop_security_verification_callback', 'reply_wrong', 'SECURITY_RETURN_STATE', 'SP_VERIFY_FAIL_MIGRATION', 'common_cs', 'cs_utils', 'is_asia_server', 'show_tid_tips', 'utils', 'do_ui_tid_replace', 'security_info', 'update', 'reply_correct']
+          str: 'reply_check_sp'
+          str: 'result'
+          str: 'op'
+          str: 'uni_key'
+          str: 'UISecondaryPassword'
+          str: 'UIMigrationPasswordVerify'
+          str: 'return_state'
+          str: 'other_pwd_open'
+          str: 'TID_OVERSEA_BISAI_EU_NA_0'
+          str: 'TID_OVERSEA_BISAI_ASIA_0'
+          str: 'TID_SETTING_YINJIMA_PASSWORD_WRONG'
+          str: 'up_info'
+          nums/bytes: [0]
+        def SecurityLogic.set_secondary_password_switch(args=3)  vars=['self', 'switch_map', 'sp_key', 'code', 'update']
+          .names/attrs: ['gen_server_stub', 'set_secondary_password_switch', 'GEN_RPC_SUCCESS', 'sp_switches', 'update', 'GK', 'g_event_dispatcher', 'onEvent', 'EVENT_TYPES', 'UPDATE_SECONDARY_SWITCH']
+        def SecurityLogic.is_sp_switch_on(args=2)  vars=['self', 'switch_id', 'str_id']
+          .names/attrs: ['str', 'sp_switches', 'GK', 'DM', 'secondary_password_config', 'get', 'int']
+          str: 'default_value'
+        def SecurityLogic.call_server_security_method(args=3)  vars=['self', 'rpc_func', 'kwargs']
+          .names/attrs: ['security_log', 'join', 'str', 'call_server_method']
+          str: 'args:'
+        def SecurityLogic.security_rpc_return(args=2)  vars=['self', 'return_info', 'success', 'return_state', 'ui_secondary_password', 'up_info']
+          .names/attrs: ['security_log_reply_info', 'get', 'GK', 'g_ui_mgr', 'get_ui', 'sync_security_info', 'reply_wrong', 'security_info', 'update', 'reply_correct', 'g_event_dispatcher', 'onEvent', 'EVENT_TYPES', 'UPDATE_SECONDARY_SWITCH']
+          str: 'security_rpc_return'
+          str: 'result'
+          str: 'return_state'
+          str: 'UISecondaryPassword'
+          str: 'UIMigrationPasswordVerify'
+          str: 'up_info'
+          nums/bytes: [0]
+        def SecurityLogic.sync_security_info(args=1)  vars=['self']
+          .names/attrs: ['call_server_security_method']
+          str: 'sync_security_info_rpc'
+        def SecurityLogic.sync_security_info_rpc(args=2)  vars=['self', 'info', 'ui']
+          .names/attrs: ['security_log_reply_info', 'security_info', 'update', 'get', 'GK', 'g_ui_mgr', 'get_ui', 'ui_type', 'notify_hide', 'refresh_page_list_setting', 'TOPTAB_NAME_DCT', 'g_event_dispatcher', 'onEvent', 'EVENT_TYPES', 'UPDATE_SECONDARY_SWITCH']
+          str: 'sync_security_info_rpc'
+          str: 'sync_info'
+          str: 'UISecondaryPassword'
+          str: 'secondary_password_shutdown'
+          str: 'UISetting'
+          str: 'safe'
+        def SecurityLogic.set_secondary_password(args=2)  vars=['self', 'pwd']
+          .names/attrs: ['call_server_security_method', 'str']
+          str: 'set_secondary_password'
+          str: 'pwd'
+        def SecurityLogic.reset_secondary_password(args=2)  vars=['self', 'pwd']
+          .names/attrs: ['call_server_security_method', 'str']
+          str: 'reset_secondary_password'
+          str: 'pwd'
+        def SecurityLogic.modify_secondary_password(args=3)  vars=['self', 'pwd', 'new_pwd']
+          .names/attrs: ['call_server_security_method', 'str']
+          str: 'modify_secondary_password'
+        def SecurityLogic.sp_free_open(args=2)  vars=['self', 'pwd']
+          .names/attrs: ['call_server_security_method', 'str']
+          str: 'sp_free_open'
+          str: 'pwd'
+        def SecurityLogic.sp_free_close(args=1)  vars=['self']
+          .names/attrs: ['call_server_security_method']
+          str: 'sp_free_close'
+        def SecurityLogic.force_reset_sp(args=1)  vars=['self']
+          .names/attrs: ['call_server_security_method']
+          str: 'force_reset_sp'
+        def SecurityLogic.undo_force_reset_sp(args=1)  vars=['self']
+          .names/attrs: ['call_server_security_method']
+          str: 'undo_force_reset_sp'
+        def SecurityLogic.request_send_sms_security(args=1)  vars=['self', 'code', 'resp', 'ok', 'msg']
+          .names/attrs: ['gen_server_stub', 'request_send_sms_security', 'GEN_RPC_SUCCESS', 'time', 'send_sms_security_cd_end_ts', 'startswith', 'GK', 'g_ui_mgr', 'show_tid_tips', 'show_tips']
+          str: 'TID_'
+          nums/bytes: [60]
+        def SecurityLogic.get_can_send_sms_security_left_time(args=1)  vars=['self']
+          .names/attrs: ['max', 'send_sms_security_cd_end_ts', 'time']
+          nums/bytes: [0]
+        def SecurityLogic.request_force_reset_sp_by_sms(args=2)  vars=['self', 'sms_code', 'code', 'resp', 'ok', 'msg']
+          .names/attrs: ['gen_server_stub', 'request_force_reset_sp_by_sms', 'GEN_RPC_SUCCESS', 'GK', 'g_ui_mgr', 'show_tips']
+        def SecurityLogic.risk_control_info(args=1)  vars=['self']
+          .names/attrs: ['security_info', 'setdefault', 'ComuKeys', 'SECURITY_KEY', 'RISK_CONTROL']
+        def SecurityLogic.is_under_risk_control(args=1)  vars=['self']
+          .names/attrs: ['risk_control_info', 'get']
+          str: 'is_allowed'
+          nums/bytes: [1, 0]
+        def SecurityLogic.check_secondary_password_async_simple(args=3)  vars=['self', 'op_key', 'need_second_password', 'sp_cb', 'uk']
+          .names/attrs: ['GK', 'g_avatar', 'need_check_sp', 'GenReturn', 'Future', 'g_ui_mgr', 'show_ui']
+          str: 'UISecondaryPassword'
+          str: 'secondary_password_check'
+            def SecurityLogic.check_secondary_password_async_simple.<locals>.sp_cb(args=1)  vars=['uk']
+              .names/attrs: ['set_result']

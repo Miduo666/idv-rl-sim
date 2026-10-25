@@ -1,0 +1,15 @@
+[package]
+name = "denpk2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+byteorder = "1.5.0"
+flate2 = "1.1.2"
+libc = "0.2.174"
+lz4_flex = "0.11.5"
+mur3 = "0.1.0"
+once_cell = "1.21.3"
+openssl = "0.10.73"
+pytools = { path = "../pytools" }
+twox-hash = "2.1.1"

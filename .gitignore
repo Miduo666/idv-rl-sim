@@ -1,0 +1,10 @@
+# 游戏解包产物 / 游戏资源：网易的东西且体积大（res_pull 内有单个 183MB 的 zip），不入库。复现方法见 README
+all_pyc/
+std_pyc/
+extracted_scripts/
+res_pull/
+intl_tid/
+drivers/sim/idx.tsv
+
+__pycache__/
+*.pyc
