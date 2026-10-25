@@ -651,7 +651,7 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 - 已知的服务端专有成员（客户端脚本里没有定义，调用处语义见 `sim1v4.ServerRoomShim`）：
   `room._get_all_generator_fix_rate(fast)`（已补：每台机进度列表）、`room.room_type`/`player_set_ai_level`（已补）、单位 `avatar`（已补 None）、
   求生者 `punish_start_timestamp`、密码机 `ai_fix_angle`/`ai_fix_pos` + `init_ai_fix_angle()`/`precompute_pos_for_ai()`（修机站位，距离来源未找到）、
-  `room.skada_mgr`、GlobalCarryScoreCal 用到的求生者恐惧值（为 None）。
+  `room.skada_mgr`。（原记"GlobalCarryScoreCal 用到的求生者恐惧值为 None"是误判，实为导航距离 None，见 §9.6.2。）
 
 ### 9.6 现状与下一步（2026-10-25 收口，下个对话从这里接）
 
@@ -722,7 +722,10 @@ col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, 
 - 本机实测：导入 178 个、失败 1（`game_kernel` 没有 `LM`）、装代理 37 个；求生者 `MathUtils` 异常消失；1.8 倍速。新增打桩模块：`battle`、`battle.units.RegionAttackManager`、`entity`、`config`、`utils`、`Timer`、`LogConf`、`mobilelog`（服务端专用导入）。
 - **`punish_start_timestamp` 已补**（`sim1v4.WorldSim1v4._init_units`，求生者）：全部脚本只有 `QAAIButcher.get_in_butcher_sight_or_chase_civis` 一处读，判 `> 0`（处罚已开始），开局未受处罚 → 取 0（任何 ≤0 等价）。**本机 2026-10-26 复跑确认**：该异常消失。
 - 同次复跑（`run1v4.py 1 300 --server-ai`，1.2 倍速）剩两处异常：密码机 `ai_fix_angle`（9.6.3-1，每帧中断 `game_tick`）；
-  监管行为树 `GlobalCarryScoreCal.cal_situation_score` 的 `fear` 为 None（`carry_tar_select` 传入的求生者恐惧值，服务端单位成员，见 §9.9 清单），每帧中断监管决策。角色仍原地不动。
+  监管行为树 `GlobalCarryScoreCal.cal_situation_score` 第 111 行 `dis < 2000` 的 **`dis` 为 None**：`QAAIButcher.carry_tar_select` 用
+  `room.get_detour_distance(but_pos, civi_pos, NAV_MESH_TILECACHE)` 算距离，导航层还是桩（`NavManager._detour` 为假 → 返回 None），每帧中断监管决策。
+  ⚠ 不是恐惧值：求生者 `fear_num` 走共用层 `FearNumComponent`（`iCommonCivilian.init_common_logic` 创建），本机实测 4 个求生者都是 0.0；§9.9 清单里"恐惧值为 None"那条是误判。
+  → **Detour 导航层已是硬阻塞**（9.6.3-2）。角色仍原地不动。
 
 #### 9.6.3 缺口清单（按阻塞程度）
 1. **`GeneratorUnit.ai_fix_angle` / `ai_fix_pos`**（硬阻塞：`AICommonTrigger._init_gen_fixdir` 每帧抛 → `game_tick` 中断）。已知：
