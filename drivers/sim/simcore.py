@@ -121,8 +121,8 @@ class SimCore(object):
         print("== 模拟时间 %.1fs 帧 %d  待执行回调 %d" % (g.now_ms() / 1000, g.frame_id(), g.pending()))
         print("== math3d 缺失:", sorted(self.math3d.MISSING.items(), key=lambda x: -x[1])[:20])
         import physx_collision
-        print("== 碰撞查询:", dict(physx_collision.QUERIES), " 其中命中:", dict(physx_collision.QUERY_HITS),
-              "（射线已接静态地图；扫掠/静态测试仍一律未命中）")
+        print("== 碰撞查询:", dict(physx_collision.QUERIES), " 其中命中:", dict(physx_collision.QUERY_HITS))
+        print("== 碰撞形状未登记（查询未命中 / 动态体没放进世界）:", dict(physx_collision.UNSUPPORTED))
         print("== scn_col 载入:", physx_collision.LOADED, " 静态过滤属性来源:", physx_collision.STATIC_SOURCE[0])
         for name, samples in sorted(physx_collision.QUERY_SAMPLES.items()):
             print("   [%s]" % name)

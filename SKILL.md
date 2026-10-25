@@ -652,7 +652,8 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 ### 9.6 下一步
 1. **碰撞层**（硬阻塞，角色不会正确移动）：`physx_collision.scene_col` 实现 `load(.scn_col)` + `sweep_test/sweep_intersect/static_test/hit_by_ray`（各 `_new` 版）。
    - ✅ 几何内核 `colworld.py` + `load` 接线（2026-10-25）。**库选 numpy 自写**：pybullet 在 PyPI 上没有 Windows/py3.11 预编译包（要装 MSVC 现编），且 Python 接口没有凸体扫掠。以后要换后端只换 `colworld.py`。
-   - ⬜ 本机跑 `t_colworld.py`、`colcheck.py`（军工厂），地面命中率应与 §9.7 的 93.9% 同量级。
+   - ✅ 本机实测（2026-10-25）：`t_colworld.py` 全过；`colcheck.py` 军工厂（`ordnance_factory_test1.nav`）地面命中 93.5%（§9.7 为 93.9%）、
+     沿导航边扫半径 3 胶囊被挡 9.8%（起点重叠 5.7%）；竖直射线 4199 次/秒、扫掠 626 次/秒。⚠ Windows 上要**去掉 `-I`** 跑：numpy 装在用户目录，`-I` 会忽略它。
    - ⬜ **适配层**：查询的参数含义与返回 6 元组各字段要从调用处反推，不能猜。素材两份：
      `run1v4.py` 末尾打印的 `QUERY_SAMPLES`（运行期实参 + 调用位置）；`usage.py 'hit_by_ray_new\(' common_cs 6 10`（`sweep_test_new`/`static_test_new`/`sweep_intersect_new` 同）看结果怎么被用。
      先做 `hit_by_ray_new`（向下射线落地，预计能解决 Y 每帧上升），再 `static_test`、`sweep_test`。
@@ -673,6 +674,17 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
      静态地图的 group/layer/utype：游戏若调用模块函数 `set_default_filter_info(layer, group, utype, color)` 就用实参，否则推断为 STATIC_BODY / Layer.NORMAL / 无类型（`report` 打印来源）。动态体暂不参与。
      `EXCLUDE_FILTER` 等常量运行期从 `common_cs.CollisionConst` 读，不写死；`t_colconst.py` 打印全部真实常量和 `UNIT_TYPE_CONF` 编号名。
    - 导航注意：军工厂 `nav/` 下有两份 `.nav`：`ordnance_factory_test1.nav`（主导航，walkable 半径 6）和 `dentist_ordnance_factory1_02.nav`（半径 1，看名字是某角色专用）。`colcheck.py` 要显式指定前者；用后者时地面 87.7%、沿边扫掠被挡 36%（边贴墙 1 个单位，半径 3 的胶囊必然蹭墙）。
+   - **真实常量（`t_colconst.py`，2026-10-25）**：`INCLUDE_FILTER 0 / EXCLUDE_FILTER 1 / INEQUAL 2 / EQUAL 3`；`Layer.NORMAL 1 / PHOTO 2 / DENTIST=GROCER=YIDHRA 4 / PHANTOM 8 / ALL 65535`；
+     形状 `SPHERE 0 / BOX 1 / CAPSULE 2 / CYLINDER 3 / MESH 4 / ORG_CAPSULE 7 / CONVEX_CYLINDER 8`；`UTYPE_SCENE 65535`；单位类型 `1 BUTCHER / 2 CIVILIAN / 146 SMOKE_LIGHT`（共 574 个）。
+     `Filter()` 默认 group 0 / layer 1 / EXCLUDE；`RoleFilter()` 默认 group 8(ROLE) / layer 65535 / EXCLUDE。
+     → 监管那条 `INCLUDE, extra={146}` 射线只测烟雾，穿过墙是对的；300 帧 2880 次射线里 576 次命中。
+   - **静态地图属性是真值**：`CollisionManager.preset_collision_module` 调 `physx_collision.set_default_filter_info(Layer.ALL, Group.STATIC_BODY, UTYPE_SCENE)`，模拟器里会走到（`report` 显示来源）。
+   - **原生 `col_object` 参数顺序已核对**：`CollisionManager.col_object(obj_type, size, unit_type, layer, …)` → `collision_so.col_object(obj_type, size, unit_type, CollisionConst.UNIT_GROUP.get(unit_type, STATIC_BODY), mass, use_model_when_fail, layer[, convex_gen])`，与桩一致。
+   - ✅ **扫掠 / 静态测试 / 路径相交 / 动态体管线已接**（2026-10-25）：每次查询前把 `add_object` 的碰撞体按位置同步进 `ColWorld`（胶囊/球转外接多面体，最多大 7%），按 `passes()` 过滤，排除查询体自身；
+     零长度扫掠返回碰撞体列表；`sweep_intersect` 用沿路径分步重叠近似；起点已重叠时按 t=0 命中返回（无依据，单独计数）。
+     **但 size 的含义按形状逐个登记，目前只登记了球（半径=size.x，依据 `vector(radius,radius,radius)`）**；盒子/胶囊未登记 → 作查询体时未命中、作动态体时不放进世界，都计入 `UNSUPPORTED`（`report` 打印）。
+     盒子的旁证：`SuitcaseChecker` 用 `BOX vector(12,15,12)` + 偏移 `(0,17,0)`，若是半长则覆盖 y 2–32，正好是 walkable 高 30——倾向半长，未确认。
+   - ⬜ 胶囊/盒子 size 约定：看建角色 `ghost_col` 的调用处、`col_conf`、`CollisionManager.get_col_bottom_ofs/add_offset`（`air_power_extra_static_test` 把角色当成 `位置 ± col_conf[1]/2` 的线段 + 半径 `col_conf[0]`）。
    - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
 3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。

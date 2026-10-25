@@ -10,7 +10,8 @@
   sweep_intersect(col, s, e, group, layer, filter_type)             sweep_intersect_new(col, s, e, group, ignore, extra, layer, filter_type)
   static_test(col, group, layer, filter_type)                       static_test_new(col, group, ignore, extra, layer, filter_type)
 返回：射线/扫掠 = 6 元组 [命中, 命中点, 法线, ?, ?, 碰撞体]（[3][4] 调用处没见用过，填 None）；static/intersect = 碰撞体列表。
-✅ 射线已接 ColWorld（只测静态地图，动态体的形状语义还没确认）；扫掠/静态测试仍一律未命中。"""
+✅ 全部查询已接 ColWorld，过滤见 passes()；动态体在每次查询前按位置同步。查询体/动态体的 size 含义按形状逐个登记（SHAPE_QUERY），
+未登记的形状不参与（UNSUPPORTED 计数）—— 目前只有球确认了。"""
 import itertools, collections, os, sys, zipfile
 import simenv
 from math3d import vector, matrix
@@ -50,7 +51,10 @@ def _fmt(x, depth=0):
 
 
 def _caller(depth=3):
-    f = sys._getframe(depth)                     # 默认：_caller <- _q <- 查询方法 <- 游戏调用处
+    try:
+        f = sys._getframe(depth)                 # 默认：_caller <- _q <- 查询方法 <- 游戏调用处；经 _ray 等再多一层
+    except ValueError:
+        return "?"
     co = f.f_code
     return "%s:%s:%d" % (os.path.basename(co.co_filename), co.co_name, f.f_lineno)
 
@@ -95,6 +99,46 @@ def passes(obj_group, obj_layer, obj_utype, group_value, ignore, extra, layer_va
     return (not sel) if filter_type == _cc().EXCLUDE_FILTER else sel
 
 
+# ---- 碰撞体形状 ----
+# 形状常量 CollisionConst：SPHERE 0 / BOX 1 / CAPSULE 2 / CYLINDER 3 / MESH 4 / ORG_CAPSULE 7 / CONVEX_CYLINDER 8。
+# size 的含义逐个形状确认后才登记；未登记的形状：作为查询体时查询一律未命中，作为动态体时不放进世界（都计入 UNSUPPORTED）。
+#   SPHERE：半径 = size.x（BaseBullet.build_collision 等都传 vector(radius, radius, radius)）
+#   BOX / CAPSULE：待确认（看建角色 ghost_col 与 col_conf 的调用处）
+UNSUPPORTED = collections.Counter()
+
+
+def _sphere(o, c):
+    return (c, c, float(o.size.x))
+
+
+SHAPE_QUERY = {0: _sphere}                       # 形状常量 -> fn(col, 中心 tuple) -> (线段端点 a, 端点 b, 半径)
+SHAPE_TRIS = {}                                  # 形状常量 -> fn(col) -> 三角形（不在表里的走 SHAPE_QUERY 转胶囊多面体）
+
+
+def _rot3(o):
+    m = getattr(getattr(o, "rotation_matrix", None), "m", None)
+    return tuple(tuple(r[:3]) for r in m[:3]) if m else None
+
+
+def _shape_state(o):
+    if o.type not in SHAPE_QUERY and o.type not in SHAPE_TRIS:
+        return None
+    return (o.type, tuple(o.size), tuple(o.position), _rot3(o))
+
+
+def _query_shape(o, center):
+    fn = SHAPE_QUERY.get(getattr(o, "type", None))
+    return fn(o, tuple(center)) if fn else None
+
+
+def _shape_tris(o):
+    import colworld
+    if o.type in SHAPE_TRIS:
+        return SHAPE_TRIS[o.type](o)
+    a, b, r = _query_shape(o, o.position)
+    return colworld.capsule_tris(a, b, r)
+
+
 class _Base(object):
     _kind = "obj"
 
@@ -108,6 +152,7 @@ class _Base(object):
 class col_object(_Base):
     _kind = "col_object"
 
+    # 参数顺序已核对：CollisionManager.col_object 调 collision_so.col_object(obj_type, size, unit_type, UNIT_GROUP[unit_type], mass, use_model_when_fail, layer[, convex_gen])
     def __init__(self, obj_type=0, size=None, unit_type=0, group=0, mass=0, use_model_when_fail=False, layer=0, *a):
         self.cid = next(_cid)
         self.type = obj_type
@@ -132,6 +177,7 @@ class scene_col(_Base):
         self.col_meshes = []
         self.world = None
         self._static = None                      # 必须显式初始化：_Base.__getattr__ 对缺失属性返回桩
+        self._dyn_state = {}                     # cid -> 上次放进 ColWorld 时的形状状态
 
     def __bool__(self): return True
     def add_to_world(self, *a): pass
@@ -167,26 +213,47 @@ class scene_col(_Base):
     def remove_object(self, o, *a):
         self.objects.pop(getattr(o, "cid", None), None)
 
-    def _q(self, name, ret, a):
+    def _q(self, name, ret, a, depth=3):
         QUERIES[name] += 1
         if len(QUERY_SAMPLES[name]) < SAMPLE_N:
-            QUERY_SAMPLES[name].append((_caller(), _fmt(a)))
+            QUERY_SAMPLES[name].append((_caller(depth), _fmt(a)))
         return ret
 
-    def _ray(self, name, a, s, e, group, ignore, extra, layer, filter_type):
-        self._q(name, None, a)
+    # ---- 过滤 / 动态体同步 ----
+    def _norm(self, layer, filter_type):
         cc = _cc()
         if layer is None:
             layer = cc.Layer.NORMAL
-        if filter_type is None:                  # 5 参数的无过滤调用：与 sweep/static 的无过滤路径一致，按 EXCLUDE(什么都不排除) 处理（推断）
+        if filter_type is None:                  # 5 参数的无过滤射线：与 sweep/static 的无过滤路径一致，按 EXCLUDE(什么都不排除) 处理（推断）
             filter_type = cc.EXCLUDE_FILTER
-        if self.world is None or not passes(*_static_attrs(), group, ignore or (), extra or (), layer, filter_type):
-            return list(NO_HIT)
-        h = self.world.raycast((s.x, s.y, s.z), (e.x, e.y, e.z))
-        if h is None:
-            return list(NO_HIT)
-        QUERY_HITS[name] += 1
-        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), None, None, self._static_obj()]
+        return layer, filter_type
+
+    def _sync(self, flt, self_cid=None):
+        """把 add_object 进来的碰撞体同步进 ColWorld（形状约定已确认的才放），返回本次查询要忽略的动态体键集合。"""
+        w = self.world
+        ignore = set()
+        live = set()
+        for cid, o in self.objects.items():
+            if o is self._static:
+                continue
+            if cid == self_cid or not getattr(o, "enable", True) or not passes(o.group, o.layer, o.unit_type, *flt):
+                ignore.add(cid)
+            st = _shape_state(o)
+            if st is None:
+                UNSUPPORTED["动态体 type=%s" % (o.type,)] += 1
+                continue
+            live.add(cid)
+            if self._dyn_state.get(cid) != st:
+                w.add_dynamic(cid, _shape_tris(o))
+                self._dyn_state[cid] = st
+        for cid in list(self._dyn_state):
+            if cid not in live:
+                w.remove_dynamic(cid)
+                del self._dyn_state[cid]
+        return ignore
+
+    def _obj(self, key):
+        return self._static_obj() if isinstance(key, tuple) else self.objects.get(key)
 
     def _static_obj(self):
         """命中静态地图时返回的碰撞体：有 cid（不在 collision_dict 里，get_unit 得 None）、group/layer/unit_type 同静态过滤属性。"""
@@ -196,6 +263,23 @@ class scene_col(_Base):
         o.group, o.layer, o.unit_type = _static_attrs()
         return o
 
+    def _prep(self, group, ignore, extra, layer, filter_type, self_cid=None):
+        layer, filter_type = self._norm(layer, filter_type)
+        flt = (group, set(ignore or ()), set(extra or ()), layer, filter_type)
+        return self._sync(flt, self_cid), passes(*_static_attrs(), *flt)
+
+    # ---- 射线 ----
+    def _ray(self, name, a, s, e, group, ignore, extra, layer, filter_type):
+        self._q(name, None, a, depth=4)
+        if self.world is None:
+            return list(NO_HIT)
+        dyn_ignore, use_static = self._prep(group, ignore, extra, layer, filter_type)
+        h = self.world.raycast(tuple(s), tuple(e), ignore=dyn_ignore, static=use_static)
+        if h is None:
+            return list(NO_HIT)
+        QUERY_HITS[name] += 1
+        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), None, None, self._obj(h.key)]
+
     def hit_by_ray(self, s, e, face_filter=0, group=0, layer=None, filter_type=None, *a):
         return self._ray("hit_by_ray", (s, e, face_filter, group, layer, filter_type) + a, s, e, group, (), (), layer, filter_type)
 
@@ -203,12 +287,95 @@ class scene_col(_Base):
         return self._ray("hit_by_ray_new", (s, e, face_filter, group, ignore, extra, layer, filter_type) + a,
                          s, e, group, ignore, extra, layer, filter_type)
 
-    def sweep_test(self, *a): return self._q("sweep_test", list(NO_HIT), a)
-    def sweep_test_new(self, *a): return self._q("sweep_test_new", list(NO_HIT), a)
-    def static_test(self, *a): return self._q("static_test", [], a)
-    def static_test_new(self, *a): return self._q("static_test_new", [], a)
-    def sweep_intersect(self, *a): return self._q("sweep_intersect", [], a)
-    def sweep_intersect_new(self, *a): return self._q("sweep_intersect_new", [], a)
+    # ---- 扫掠 / 静态测试（查询体形状约定未确认时一律未命中，并在 UNSUPPORTED 计数）----
+    def _query_geom(self, name, col, center):
+        g = _query_shape(col, center)
+        if g is None:
+            UNSUPPORTED["%s 查询体 type=%s" % (name, getattr(col, "type", None))] += 1
+        return g
+
+    def _sweep(self, name, a, col, s, e, group, ignore, extra, layer, filter_type):
+        self._q(name, None, a, depth=4)
+        if self.world is None:
+            return list(NO_HIT)
+        g = self._query_geom(name, col, s)
+        if g is None:
+            return list(NO_HIT)
+        dyn_ignore, use_static = self._prep(group, ignore, extra, layer, filter_type, col.cid)
+        p0, p1, r = g
+        delta = (e.x - s.x, e.y - s.y, e.z - s.z)
+        if delta == (0.0, 0.0, 0.0):
+            # 起点=终点：check_in_collision_static_ex_sweep_test 把 [-1] 当碰撞体列表遍历、未命中判 None（其余槽位无用例，填 None）
+            hits = self.world.capsule_overlap(p0, p1, r, ignore=dyn_ignore, static=use_static)
+            if not hits:
+                return list(NO_HIT)
+            QUERY_HITS[name] += 1
+            return [True, None, None, None, None, [self._obj(k) for k, _ in hits]]
+        h = self.world.capsule_sweep(p0, p1, r, delta, ignore=dyn_ignore, static=use_static)
+        if h is None:
+            return list(NO_HIT)
+        QUERY_HITS[name] += 1
+        if h.start_overlap:
+            QUERY_HITS[name + ":起点已重叠"] += 1      # 起点就压着东西时原生怎么返回没有依据，暂按 t=0 命中返回
+        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), None, None, self._obj(h.key)]
+
+    def sweep_test(self, col, s, e, group=0, layer=None, face_filter=0, filter_type=None, *a):
+        return self._sweep("sweep_test", (col, s, e, group, layer, face_filter, filter_type) + a, col, s, e, group, (), (), layer, filter_type)
+
+    def sweep_test_new(self, col, s, e, group=0, ignore=(), extra=(), layer=None, face_filter=0, filter_type=None, *a):
+        return self._sweep("sweep_test_new", (col, s, e, group, ignore, extra, layer, face_filter, filter_type) + a,
+                           col, s, e, group, ignore, extra, layer, filter_type)
+
+    def _static_test(self, name, a, col, group, ignore, extra, layer, filter_type):
+        self._q(name, None, a, depth=4)
+        if self.world is None:
+            return []
+        g = self._query_geom(name, col, col.position)
+        if g is None:
+            return []
+        dyn_ignore, use_static = self._prep(group, ignore, extra, layer, filter_type, col.cid)
+        hits = self.world.capsule_overlap(*g, ignore=dyn_ignore, static=use_static)
+        if hits:
+            QUERY_HITS[name] += 1
+        return [self._obj(k) for k, _ in hits]
+
+    def static_test(self, col, group=0, layer=None, filter_type=None, *a):
+        return self._static_test("static_test", (col, group, layer, filter_type) + a, col, group, (), (), layer, filter_type)
+
+    def static_test_new(self, col, group=0, ignore=(), extra=(), layer=None, filter_type=None, *a):
+        return self._static_test("static_test_new", (col, group, ignore, extra, layer, filter_type) + a,
+                                 col, group, ignore, extra, layer, filter_type)
+
+    def _intersect(self, name, a, col, s, e, group, ignore, extra, layer, filter_type):
+        """扫过路径上碰到的全部碰撞体（terrain_wall_sweep_test 把结果当集合遍历）。近似：沿路径按半径一半的步长做重叠测试取并集。"""
+        self._q(name, None, a, depth=4)
+        if self.world is None:
+            return []
+        g = self._query_geom(name, col, s)
+        if g is None:
+            return []
+        dyn_ignore, use_static = self._prep(group, ignore, extra, layer, filter_type, col.cid)
+        p0, p1, r = g
+        d = (e.x - s.x, e.y - s.y, e.z - s.z)
+        L = (d[0] ** 2 + d[1] ** 2 + d[2] ** 2) ** 0.5
+        n = max(1, int(L / max(r * 0.5, 1e-3)))
+        seen = {}
+        for i in range(n + 1):
+            t = i / n
+            off = (d[0] * t, d[1] * t, d[2] * t)
+            for k, _ in self.world.capsule_overlap([p0[j] + off[j] for j in range(3)], [p1[j] + off[j] for j in range(3)], r,
+                                                   ignore=dyn_ignore, static=use_static):
+                seen.setdefault(k, None)
+        if seen:
+            QUERY_HITS[name] += 1
+        return [self._obj(k) for k in seen]
+
+    def sweep_intersect(self, col, s, e, group=0, layer=None, filter_type=None, *a):
+        return self._intersect("sweep_intersect", (col, s, e, group, layer, filter_type) + a, col, s, e, group, (), (), layer, filter_type)
+
+    def sweep_intersect_new(self, col, s, e, group=0, ignore=(), extra=(), layer=None, filter_type=None, *a):
+        return self._intersect("sweep_intersect_new", (col, s, e, group, ignore, extra, layer, filter_type) + a,
+                               col, s, e, group, ignore, extra, layer, filter_type)
 
 
 def __getattr__(name):

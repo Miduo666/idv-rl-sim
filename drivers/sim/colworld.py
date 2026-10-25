@@ -160,6 +160,36 @@ def box_tris(center, half, rot=None):
     return c[np.array(F)]
 
 
+def capsule_tris(a, b, r, nseg=12, nring=3):
+    """胶囊(线段 a-b + 半径 r，a==b 即球) → 外接多面体三角形（用于把动态胶囊/球放进三角形世界；半径按外接放大，不会漏碰）。"""
+    a = np.asarray(a, dtype=np.float64); b = np.asarray(b, dtype=np.float64)
+    ax = b - a
+    L = np.linalg.norm(ax)
+    u = ax / L if L > 1e-9 else np.array([0.0, 1.0, 0.0])
+    t = np.array([1.0, 0.0, 0.0]) if abs(u[0]) < 0.9 else np.array([0.0, 0.0, 1.0])
+    e1 = np.cross(u, t); e1 /= np.linalg.norm(e1); e2 = np.cross(u, e1)
+    R = r / np.cos(np.pi / nseg) / np.cos(np.pi / (4 * nring))   # 外接修正（经线 / 纬线方向）
+    ang = np.linspace(0, 2 * np.pi, nseg, endpoint=False)
+    rings = []                                   # (中心, 半径倍数) 从 a 端极点到 b 端极点
+    for k in range(nring, 0, -1):
+        th = np.pi / 2 * k / nring
+        rings.append((a - u * R * np.sin(th), np.cos(th)))
+    for k in range(0, nring + 1):
+        th = np.pi / 2 * k / nring
+        rings.append((b + u * R * np.sin(th), np.cos(th)))
+    rings.insert(nring, (a, 1.0))
+    V = []
+    for c, f in rings:
+        V.append(c + R * f * (np.cos(ang)[:, None] * e1 + np.sin(ang)[:, None] * e2))
+    T = []
+    for i in range(len(V) - 1):
+        for j in range(nseg):
+            j2 = (j + 1) % nseg
+            T.append((V[i][j], V[i + 1][j], V[i + 1][j2]))
+            T.append((V[i][j], V[i + 1][j2], V[i][j2]))
+    return np.array(T)
+
+
 # ---------------- 世界 ----------------
 
 class ColWorld(object):
@@ -288,8 +318,10 @@ class ColWorld(object):
             return np.zeros(0, dtype=np.int64)
         return np.unique(np.concatenate([self.g_tri[i:j] for i, j in zip(s, e) if j > i]))
 
-    def _candidates(self, ks, ignore):
-        """(静态子集, 静态键, 动态 _Tris, 动态键)；ignore 是不参与的动态体键集合。"""
+    def _candidates(self, ks, ignore, static=True):
+        """(静态子集, 静态键, 动态 _Tris, 动态键)；ignore 是不参与的动态体键集合；static=False 时不测静态地图。"""
+        if not static:
+            ks = ks[:0]
         st = self.st.sub(ks)
         skeys = [("s", int(i)) for i in self.st_obj[ks]]
         dtr, owner = self._dyn_merged()
@@ -299,11 +331,11 @@ class ColWorld(object):
         return st, skeys, dtr, owner
 
     # ---- 查询 ----
-    def raycast(self, p0, p1, ignore=()):
+    def raycast(self, p0, p1, ignore=(), static=True):
         """线段 p0→p1 上最近的命中；法线朝向射线起点一侧（三角形绕序没有约定，见文件头）。"""
         p0 = np.asarray(p0, dtype=np.float64); p1 = np.asarray(p1, dtype=np.float64)
         d = p1 - p0
-        st, skeys, dtr, owner = self._candidates(self._tris_in(self._cells_segment(p0, p1)), ignore)
+        st, skeys, dtr, owner = self._candidates(self._tris_in(self._cells_segment(p0, p1)), ignore, static)
         best = None
         for tr, keys in ((st, skeys), (dtr, owner)):
             if not len(tr):
@@ -319,30 +351,30 @@ class ColWorld(object):
             n = -n
         return Hit(t, p0 + t * d, n.copy(), key, i)
 
-    def _box_query(self, lo, hi, ignore):
+    def _box_query(self, lo, hi, ignore, static=True):
         """包围盒 [lo,hi] 内（按三角形的 3D 包围盒判）的候选：先按格子，再按包围盒细筛。"""
         ks = self._tris_in(self._cells_rect(lo[[0, 2]], hi[[0, 2]]))
         if len(ks):
             ks = ks[np.all((self.st.mx[ks] >= lo) & (self.st.mn[ks] <= hi), axis=1)]
-        st, skeys, dtr, owner = self._candidates(ks, ignore)
+        st, skeys, dtr, owner = self._candidates(ks, ignore, static)
         if len(dtr):
             m = np.nonzero(np.all((dtr.mx >= lo) & (dtr.mn <= hi), axis=1))[0]
             dtr = dtr.sub(m); owner = [owner[i] for i in m]
         return [(tr, keys) for tr, keys in ((st, skeys), (dtr, owner)) if len(tr)]
 
-    def capsule_overlap(self, a, b, r, ignore=(), margin=0.0):
+    def capsule_overlap(self, a, b, r, ignore=(), margin=0.0, static=True):
         """与胶囊(线段 a-b, 半径 r)重叠的物体：[(键, 最近距离-r)]，按穿透深度从深到浅。"""
         a = np.asarray(a, dtype=np.float64); b = np.asarray(b, dtype=np.float64)
         pad = max(r + margin, 0.0)
         res = {}
-        for tr, keys in self._box_query(np.minimum(a, b) - pad, np.maximum(a, b) + pad, ignore):
+        for tr, keys in self._box_query(np.minimum(a, b) - pad, np.maximum(a, b) + pad, ignore, static):
             dist = seg_tris(a, b, tr)[0]
             for i in np.nonzero(dist < r + margin)[0]:
                 k = keys[i]
                 res[k] = min(res.get(k, np.inf), float(dist[i]) - r)
         return sorted(res.items(), key=lambda kv: kv[1])
 
-    def capsule_sweep(self, a, b, r, delta, ignore=(), skin=1e-3, max_iter=64):
+    def capsule_sweep(self, a, b, r, delta, ignore=(), skin=1e-3, max_iter=64, static=True):
         """胶囊平移 delta 的首次接触（保守推进：每步按当前最近距离前进，平移下距离的减小速度不超过 |delta|）。
         返回 Hit：t = 接触前可走的比例，point = 接触点(三角形上)，normal = 从接触点指向胶囊。起点已重叠时 t=0、start_overlap。"""
         a = np.asarray(a, dtype=np.float64); b = np.asarray(b, dtype=np.float64)
@@ -350,7 +382,7 @@ class ColWorld(object):
         L = float(np.linalg.norm(delta))
         lo = np.minimum(a, b) + np.minimum(delta, 0) - r
         hi = np.maximum(a, b) + np.maximum(delta, 0) + r
-        groups = self._box_query(lo, hi, ignore)
+        groups = self._box_query(lo, hi, ignore, static)
         if not groups:
             return None
 
