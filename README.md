@@ -49,7 +49,11 @@
 - 新方向 / 设计选择先给结论和方案，确认后再写代码；只做点名的项，调研中的旁支发现记进 SKILL。
 - 模拟器的垫片（服务端房间/单位接口）每条注明调用处与推断依据；推断不出的值不要编。
 
-## 现状（2026-10-26）
+## 现状（2026-10-25 收口，详见 SKILL §9.6）
 
-军工厂 1v4：1 监管 + 4 求生者都挂人机行为树、每帧在跑，整图交互物齐全。下一步见 SKILL §9.6：
-碰撞/导航层（碰撞几何内核 `drivers/sim/colworld.py` 已完成，待接游戏查询接口；导航待定）→ 服务端模式 AI 孤岛 → RL 动作/观测接口。
+军工厂 1v4：1 监管 + 4 求生者都挂人机行为树、每帧在跑，整图交互物齐全。
+- **碰撞层完成**：`drivers/sim/colworld.py`（numpy 碰撞内核）+ `natives/physx_collision.py`（接游戏 `CollisionManager`），射线/扫掠/静态测试/路径相交、过滤语义、球/盒子/胶囊三种形状都有调用处依据；自测 `t_colworld.py`、`t_physx.py`。
+- **服务端模式 AI 孤岛完成**：`python run1v4.py 1 300 --server-ai`，人机 AI 走服务端完整逻辑。
+- **角色仍不动**，剩两处缺口：密码机 `ai_fix_angle/ai_fix_pos`（服务端算法不在客户端脚本里）、导航层（Detour 替代）。之后才是 RL 动作/观测接口。
+
+本机运行（Windows，`drivers\sim` 下，不要加 `-I`）：`python t_physx.py`、`python run1v4.py 1 300 --server-ai`，完整命令见 SKILL §9.6.5。

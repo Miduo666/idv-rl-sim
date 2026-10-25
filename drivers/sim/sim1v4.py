@@ -61,6 +61,10 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
             u = self.unit_mgr.get_unit(uid)
             if not hasattr(u, "avatar"):
                 u.avatar = None     # 服务端单位上挂真人账号对象；人机为 None（AIHelper.cal_civilian_ave_part 按此跳过）
+            if self.roles[uid][0] == "civilian" and not hasattr(u, "punish_start_timestamp"):
+                # 服务端求生者成员。全部脚本只有一处读：QAAIButcher.get_in_butcher_sight_or_chase_civis 判 `civ.punish_start_timestamp > 0`
+                # （>0 = 处罚已开始）。开局未受处罚 → 任何 ≤0 的值等价，取 0
+                u.punish_start_timestamp = 0
 
     def attach_ais(self):
         """开局后给配置了行为树的角色挂 AI。按服务端做法：监管走 QAAIFactory，求生者走 change_ai(AICivilian)。"""

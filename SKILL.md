@@ -22,6 +22,8 @@
    **真正高危的是注入探针路线**（ptrace+Dobby+落地.so 会撞 native 环境检测）。
 4. 2026-10-15 那次只读 /proc 被弹"检测到修改客户端"，**在 Python 层和 libsec-lib 里都找不到对应机制**
    —— 支持"未必是只读 /proc 本身触发"的判断。彻底坐实需逆 175MB 的 `libclient.so`（见 §7 待办）。
+5. **模拟器 + 强化学习主线（2026-10-24 起）**：字节码还原后在标准 CPython 3.11 无引擎跑游戏自带的本地服务端对局（§9）。
+   碰撞层已完成、AI 孤岛机制已完成，剩密码机修机站位（服务端算法缺）和导航层两处缺口 → **从 §9.6 接着做**。
 
 ---
 
@@ -605,24 +607,25 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 下次若再注入，可顺手 `dir(C_file)` 找有没有暴露路径→哈希的函数。工具 `drivers/sim/hashcrack.py`。
 
 ### 9.9 ★ 1v4 模拟对局框架（2026-10-26，`drivers/sim/`）
+**最新现状与下一步见 §9.6（2026-10-25 收口）。** 以下是 2026-10-26 框架建立时的记录。
 **现状**：军工厂 1 监管 + 4 求生者全部挂人机行为树，每帧都在跑；整图交互物齐（板 43/窗 17/门 2/开关 2/柜 18/椅 20/机 7/箱 6/地窖 1）。
 无单位时约 26 倍速，5 个 AI 跑起来约 2 倍速（还没优化）。**角色还不会正确移动**：碰撞查询全是"未命中"，Y 坐标每帧匀速上升。
 
 | 文件 | 作用 |
 |---|---|
-| `simcore.py` | `SimCore`：启动、表现层置空、模拟时钟、GK 桩、`SimWorldMgr`、`make_world` / `frame` / `run` / `report` |
-| `sim1v4.py` | `WorldSim1v4(ServerRoomShim, WorldBattleClientBase)`：编成、出生点、按服务端方式挂 AI、服务端房间垫片 |
-| `run1v4.py` | 驱动：`python run1v4.py [scene] [帧]`，打印轨迹/行为树步数/异常 |
+| `simcore.py` | `SimCore`：启动、表现层置空、模拟时钟、GK 桩、`SimWorldMgr`、`make_world` / `frame` / `run` / `report`；`SimCore(server_ai=True)` 装服务端模式 AI 孤岛（`install_server_ai_island`，§9.6.2） |
+| `sim1v4.py` | `WorldSim1v4(ServerRoomShim, WorldBattleClientBase)`：编成、出生点、按服务端方式挂 AI、服务端房间垫片；求生者补 `avatar=None`、`punish_start_timestamp=0`（依据见 §9.6.2） |
+| `run1v4.py` | 驱动：`python run1v4.py [scene] [帧] [--server-ai]`，打印轨迹/行为树步数/异常/碰撞统计与调用样本 |
 | `simrun.py` | 新手局诊断（改用 SimCore） |
 | `pseudo.py` | ★ 3.11 字节码 → 伪源码（栈模拟折叠表达式，跳转写 goto）。`python pseudo.py worlds/X.pyc '函数名正则'`。pycdc 不支持 3.11（MAKE_CELL 直接放弃），别再试 |
 | `usage.py` | 某调用的结果在调用方怎么用：`python usage.py 'collision_mgr\.hit_by_ray_new\(' common_cs 3 6` |
 | `idxq.py` | 查 idx.tsv：`python idxq.py '^ai_id$' [路径前缀]`（输出别直接接 `Select-Object -First`，会 OSError，先重定向到文件） |
-| `natives/physx_collision.py`(+`bullet_collision.py`) | 碰撞体真对象 + scene_col 记录；`load(.scn_col)` 已从资源 zip（`IDV_RES_ZIP`，默认 `res_pull/resdump_1025_015456/res_recovered.zip`）读进 `ColWorld`（`scene_col.world`）；**查询仍一律未命中**，但记录每种查询前 6 次的实参 + 调用位置（`QUERY_SAMPLES`，`SimCore.report` 打印） |
-| `colworld.py` | ★ 碰撞内核（只依赖 numpy，2026-10-25）：静态网格 + 动态体(OBB→三角形) 上的 `raycast` / `capsule_overlap` / `capsule_sweep`(保守推进)，XZ 均匀网格 + 3D 包围盒预筛。合成 9 万三角形图上：竖直射线约 2500 次/秒、胶囊扫掠约 600 次/秒（本机实测待跑） |
+| `natives/physx_collision.py`(+`bullet_collision.py`) | ★ 碰撞适配层（§9.6.1）：`load(.scn_col)` 从资源 zip（`IDV_RES_ZIP`，默认 `res_pull/resdump_1025_015456/res_recovered.zip`）建 `ColWorld`；射线/扫掠/静态测试/路径相交全接，过滤 `passes()`，形状表 `SHAPE_QUERY`（球/盒子/胶囊），动态体标脏同步；统计 `QUERIES`/`QUERY_HITS`/`UNSUPPORTED`/`QUERY_SAMPLES` |
+| `colworld.py` | ★ 碰撞内核（只依赖 numpy，2026-10-25）：静态网格 + 动态体(三角形) 上的 `raycast` / `capsule_overlap` / `capsule_sweep`(保守推进) / `box_overlap`(分离轴)，XZ 均匀网格 + 3D 包围盒预筛 + 动态体 slab 剪枝；`box_tris`/`capsule_tris`(外接多面体)。军工厂本机：竖直射线 4199 次/秒、扫掠 626 次/秒 |
 | `t_colworld.py` | colworld 自测：合成 `.scn_col`（含旋转物体）+ 与暴力解 / 密集采样对拍，不需要游戏资源 |
 | `t_colconst.py` | 打印碰撞适配要用的真实常量（`CollisionConst` 的过滤模式/Layer/Group/形状、`Filter`/`RoleFilter` 默认参数、`UNIT_TYPE_CONF` 编号名） |
 | `t_physx.py` | `physx_collision` 适配层自测（假 `CollisionConst` + 合成地图）：过滤语义、返回结构、动态体同步、三种形状、副本语义；39 项。把过滤模式故意弄反时 26 项失败 |
-| `colcheck.py` | 真实地图校验：`colcheck.py <zip> <scn_col> <nav> [半径] [抽样]` → 导航顶点下方地面命中率、沿导航边扫胶囊的被挡比例、吞吐 |
+| `colcheck.py` | 真实地图校验：`colcheck.py <zip> <scn_col> [nav|auto] [半径] [抽样]` → 导航顶点下方地面命中率、沿导航边扫胶囊的被挡比例、吞吐（nav 省略时自动找同目录 `.nav`，军工厂要显式给主导航） |
 | `natives/world.py` | `scene.get_model(name)` 按 `DM.pos_info[scene_id]`（每项 = 模型名, 位置, 16f 矩阵, …）返回带变换的模型；`register_scene_models` |
 | `natives/math3d.py` | 补 `vector.__abs__`(=长度)、向量比较(按长度，推断)、`rotation.slerp`、`rotation_to_matrix`；`matrix.rotation` 改为返回旋转部分矩阵(NeoX 语义)；修 `matrix_to_rotation` 迹≤0 分支 |
 | `simpatch.py` | 新增 `install_traceback_capture`（游戏吞异常都走 `TracebackManager().on_traceback`）、`count_calls`（调用链计数诊断） |
@@ -650,62 +653,101 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
   求生者 `punish_start_timestamp`、密码机 `ai_fix_angle`/`ai_fix_pos` + `init_ai_fix_angle()`/`precompute_pos_for_ai()`（修机站位，距离来源未找到）、
   `room.skada_mgr`、GlobalCarryScoreCal 用到的求生者恐惧值（为 None）。
 
-### 9.6 下一步
-1. **碰撞层**（硬阻塞，角色不会正确移动）：`physx_collision.scene_col` 实现 `load(.scn_col)` + `sweep_test/sweep_intersect/static_test/hit_by_ray`（各 `_new` 版）。
-   - ✅ 几何内核 `colworld.py` + `load` 接线（2026-10-25）。**库选 numpy 自写**：pybullet 在 PyPI 上没有 Windows/py3.11 预编译包（要装 MSVC 现编），且 Python 接口没有凸体扫掠。以后要换后端只换 `colworld.py`。
-   - ✅ 本机实测（2026-10-25）：`t_colworld.py` 全过；`colcheck.py` 军工厂（`ordnance_factory_test1.nav`）地面命中 93.5%（§9.7 为 93.9%）、
-     沿导航边扫半径 3 胶囊被挡 9.8%（起点重叠 5.7%）；竖直射线 4199 次/秒、扫掠 626 次/秒。⚠ Windows 上要**去掉 `-I`** 跑：numpy 装在用户目录，`-I` 会忽略它。
-   - ⬜ **适配层**：查询的参数含义与返回 6 元组各字段要从调用处反推，不能猜。素材两份：
-     `run1v4.py` 末尾打印的 `QUERY_SAMPLES`（运行期实参 + 调用位置）；`usage.py 'hit_by_ray_new\(' common_cs 6 10`（`sweep_test_new`/`static_test_new`/`sweep_intersect_new` 同）看结果怎么被用。
-     先做 `hit_by_ray_new`（向下射线落地，预计能解决 Y 每帧上升），再 `static_test`、`sweep_test`。
-   - **调用处反推结果（2026-10-25，`usage.py`，这些是 `collision_mgr`(CollisionManager) 层的用法，原生层怎么被它包装还要看 CollisionManager 本身）**：
-     - `hit_by_ray_new(start, end, filter_obj | filter_rule=CollisionConst.RoleFilter(...))`：调用处**只用 `res[0]`**（是否被挡）。用途全是视线/遮挡判断（手电筒、杰克隔墙技能、求生者判断监管与机之间有无遮挡）。
-     - `sweep_test_new(col_obj, start, end, filter_rule)`：`res[0]` 是否命中、`res[1]` 命中点(vector，`hit_pos + push_dir*半径` 再回写位置)、`res[2]` 法线、`res[5]`/`res[-1]` 命中的碰撞体（有 `.cid`，`collision_mgr.get_unit(cid)` 取单位）；`res[3]`、`res[4]` 调用处还没见到用法。用户：`MotionSimulation.tick_pos`、`RootMotion(Classic)Component._check_col_in_root_motion`（根运动移动）。
-     - `static_test_new(col_obj, filter_rule)`：返回碰到的碰撞体列表（元素有 `.group`、`.cid`），空为 `[]` 或 `None`（`InteractiveComponent` 判 `is None`）。用户：`TpsMoveComponent.calculate_walk_next_position`（走路）、`InteractiveComponent.update_interested_units`（交互范围）、AI 的 `verify_model`/`judge_valid`。
-     - 运行期计数：军工厂 300 帧里 `hit_by_ray_new` 2880 次（每帧约 10 次），其余查询 0 次——因为单位都没在走（见下）。
-   - **同一次运行里 5 个角色全程原地不动、Y 恒定**（不再是"Y 每帧上升"）。挡住移动的是行为树每步都抛的服务端专有成员异常，不是碰撞：
-     监管 `punish_start_timestamp`（求生者缺）、求生者 `NameError: MathUtils`（客户端模式不导入）、`AICommonTrigger._init_gen_fixdir` 缺 `GeneratorUnit.ai_fix_angle`——正是第 2 步"AI 孤岛"的清单。
-   - **原生层接口（2026-10-25，`CollisionMgr.CollisionManager` 伪源码）**：全部签名写在 `natives/physx_collision.py` 文件头。要点：
-     - `collision_mgr.X_new(..., filter_rule)` 在 filter 没有 extra/ignore 类型时调原生**旧版** `X`，有时调原生 `X_new`，把 `filter_rule.group_value/ignore_unit_types/extra_unit_types/layer_value/face_filter/filter_type` 拆成位置参数；filter 为 None 时传 `group=0, Layer.NORMAL, EXCLUDE_FILTER`（＝什么都不排除）。
-     - 过滤语义（`_modify_filter_rule` + 脚本里手写的 `air_power_extra_static_test` 反推）：先要 `obj.layer & layer_value`；选中 = (分组命中 `group_value` 或 类型∈extra) 且 类型∉ignore；EXCLUDE 打未选中的，INCLUDE 只打选中的。
-     - 运行期样本：`RoleFilter()` → `group=332`(=BATTLE_ATTACK_EXCLUDE=VIRTUAL|ROLE|SCENE_TRIGGER|ATTACK_FILTER)、`extra={1,2}`、`layer=1`、`filter_type=1`；监管视线另有 `group=0, extra={146}, filter_type=0`。
-     - `sweep_test_new(...)[-1]`：`check_in_collision_static_ex_sweep_test` 用起点=终点的扫掠当静态测试，并把 `[-1]` 当**列表**遍历；其它调用处 `[-1]`/`[5]` 是单个碰撞体（`.cid`）。原生在零长度时返回结构不同，接扫掠时要分开处理。
-     - `Group`：STATIC_BODY 1 / DYNAMIC_BODY 2 / VIRTUAL_BODY 4 / ROLE 8 / PHYSICS_BODY 16 / VEHICLE 32 / SCENE_TRIGGER 64 / INTER_FILTER 128 / ATTACK_FILTER 256；MOVE_EXCLUDE=CAM_IGNORE_GROUP=68。
-   - ✅ **射线已接**：`hit_by_ray`/`hit_by_ray_new` 对静态地图走 `ColWorld.raycast`，返回 `[True, 命中点, 法线, None, None, 静态碰撞体]`（[3][4] 无用例，填 None）。
-     静态地图的 group/layer/utype：游戏若调用模块函数 `set_default_filter_info(layer, group, utype, color)` 就用实参，否则推断为 STATIC_BODY / Layer.NORMAL / 无类型（`report` 打印来源）。动态体暂不参与。
-     `EXCLUDE_FILTER` 等常量运行期从 `common_cs.CollisionConst` 读，不写死；`t_colconst.py` 打印全部真实常量和 `UNIT_TYPE_CONF` 编号名。
-   - 导航注意：军工厂 `nav/` 下有两份 `.nav`：`ordnance_factory_test1.nav`（主导航，walkable 半径 6）和 `dentist_ordnance_factory1_02.nav`（半径 1，看名字是某角色专用）。`colcheck.py` 要显式指定前者；用后者时地面 87.7%、沿边扫掠被挡 36%（边贴墙 1 个单位，半径 3 的胶囊必然蹭墙）。
-   - **真实常量（`t_colconst.py`，2026-10-25）**：`INCLUDE_FILTER 0 / EXCLUDE_FILTER 1 / INEQUAL 2 / EQUAL 3`；`Layer.NORMAL 1 / PHOTO 2 / DENTIST=GROCER=YIDHRA 4 / PHANTOM 8 / ALL 65535`；
-     形状 `SPHERE 0 / BOX 1 / CAPSULE 2 / CYLINDER 3 / MESH 4 / ORG_CAPSULE 7 / CONVEX_CYLINDER 8`；`UTYPE_SCENE 65535`；单位类型 `1 BUTCHER / 2 CIVILIAN / 146 SMOKE_LIGHT`（共 574 个）。
-     `Filter()` 默认 group 0 / layer 1 / EXCLUDE；`RoleFilter()` 默认 group 8(ROLE) / layer 65535 / EXCLUDE。
-     → 监管那条 `INCLUDE, extra={146}` 射线只测烟雾，穿过墙是对的；300 帧 2880 次射线里 576 次命中。
-   - **静态地图属性是真值**：`CollisionManager.preset_collision_module` 调 `physx_collision.set_default_filter_info(Layer.ALL, Group.STATIC_BODY, UTYPE_SCENE)`，模拟器里会走到（`report` 显示来源）。
-   - **原生 `col_object` 参数顺序已核对**：`CollisionManager.col_object(obj_type, size, unit_type, layer, …)` → `collision_so.col_object(obj_type, size, unit_type, CollisionConst.UNIT_GROUP.get(unit_type, STATIC_BODY), mass, use_model_when_fail, layer[, convex_gen])`，与桩一致。
-   - ✅ **扫掠 / 静态测试 / 路径相交 / 动态体管线已接**（2026-10-25）：每次查询前把 `add_object` 的碰撞体按位置同步进 `ColWorld`（胶囊/球转外接多面体，最多大 7%），按 `passes()` 过滤，排除查询体自身；
-     零长度扫掠返回碰撞体列表；`sweep_intersect` 用沿路径分步重叠近似；起点已重叠时按 t=0 命中返回（无依据，单独计数）。
-     **但 size 的含义按形状逐个登记，目前只登记了球（半径=size.x，依据 `vector(radius,radius,radius)`）**；盒子/胶囊未登记 → 作查询体时未命中、作动态体时不放进世界，都计入 `UNSUPPORTED`（`report` 打印）。
-     盒子的旁证：`SuitcaseChecker` 用 `BOX vector(12,15,12)` + 偏移 `(0,17,0)`，若是半长则覆盖 y 2–32，正好是 walkable 高 30——倾向半长，未确认。
-   - ✅ **盒子已登记（2026-10-25）**：size = 半长、中心 = position、朝向 = rotation_matrix。依据：迷宫墙 `BOX (13.2,15,1.2)` 摆在 `pos+(0,15,0)`、终点格 `(11,15,1)` 在 `+12.5`、`SuitcaseChecker (12,15,12)` 偏移 `+17`，按半长算底面都贴地。
-     球的半径约定由 `get_col_bottom_ofs`（type==0 → `(0,-col_size.y,0)`）坐实；原生碰撞体有 `col_size` 属性，桩已补。
-     盒子作查询体：静态测试 / 零长度扫掠 / 路径相交走 `ColWorld.box_overlap`（分离轴，对拍 3000 例 0 误报 0 漏报）；盒子连续扫掠未实现（计数）。
-   - 运行期统计（300 帧）：每次查询都有 **138 个盒子**（板/窗/门等）和 **5 个胶囊**（＝5 个角色的 ghost_col）—— 角色碰撞体是 `CAPSULE`。
-   - **`col_conf = [半径, 高度]`**（`BaseUnit.init_collision` 读配表 `move_col`；大厅 NPC 写死 `(4.5, 8.0)`、`col_height_offset 8.0`；`reset_unit_collision` 里 `col_height_offset = 高度/4 + h_off`）。
-   - **角色胶囊在 `CollisionManager.add_collision(unit, model_scale)` 里建**（`BaseUnit.init_collision`/`reset_unit_collision` 只设 `col_conf` 后调它）；胶囊中心离地 `col_height_offset = OFFSET_HEIGHT + 高度/4`（有 `move_col_ofs` 时用其 `[1]`）。
-   - **性能（2026-10-25）**：动态体接入后本机从 1.5 倍速掉到 1.0 倍速（每次查询 Python 遍历 143 个碰撞体 + 逐三角形建键/拷贝）。改为：
-     碰撞体赋值 `position/rotation_matrix/size/type/enable` 时标脏、查询前只同步脏的（`position`/`rotation_matrix` 按副本存取，推断与原生一致）；过滤结果按过滤条件缓存；
-     内核候选键改整数数组、动态体按忽略集合缓存掩码、射线先按物体包围盒 slab 剪枝、自写叉积。合成场景 143 个碰撞体下每次射线 1.96 → 0.71 ms；`t_colworld.py` 新增带动态体与忽略集合的对拍。
-   - ✅ **胶囊已登记（2026-10-25）**：线段沿局部 Y（`rotation_matrix` 第 2 行），中心 = position，**线段半长 = size.y、半径 = size.x**。
-     依据：`CollisionManager._add_collision_role` 建角色胶囊 `col_object(CAPSULE, vector(col_conf[0], col_conf[1]/2, col_conf[0]), unit_type, layer)`，
-     再由 `_add_ghost_col_to_scene(unit, col, x, height, z, …)` 放到 `单位位置 + (x, col_height_offset, z)`；脚本手写的 `air_power_extra_static_test` 对同一胶囊按 `position ± col_conf[1]*0.5` + 半径 `col_conf[0]` 计算，两处一致。
-     `add_collision` 按 `unit_type` 查 `_unit_type_add_col_func_map` 分派，各种单位的碰撞体都在 `_add_collision_*` 里（尺寸多来自配表 `box_bounding` 的 `dataconf`/`offset`）。
-     未登记：`ORG_CAPSULE`（侦探）、`CYLINDER`（棺材等，`convex_gen`）、`MESH`。至此军工厂 1v4 用到的形状（盒子 138 + 胶囊 5）全部登记，本机 `UNSUPPORTED` 应为空。
-   - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
-2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
-   - ✅ 机制已入 `simcore.install_server_ai_island`（2026-10-25），`SimCore(server_ai=True)` / `run1v4.py … --server-ai` 打开，默认关。
-     与 `exp_servermode.py` 同法，区别：dev_config 代理改成实时转发（不做快照）；**不带实验里的占位值**（修机角度 `[0,1,2,3]`、`punish_start_timestamp=0`、手动塞 `MathUtils`）。
-     若 `worlds.WorldBattleClientBase` 已提前加载会打印警告（其引用的是旧 AI 类）。假 std_pyc 树上验证：导入期/调用期都见 SERVER_MODE=True、`Netease`→GK、`bt_code` 跳过、失败只计数。
-   - ⬜ 本机 `--server-ai` 跑出的缺口逐条查：`punish_start_timestamp`（`QAAIButcher.get_in_butcher_sight_or_chase_civis`）、`GeneratorUnit.ai_fix_angle/ai_fix_pos`（`AICommonTrigger._init_gen_fixdir`）、`room.skada_mgr` 等。
-3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。
+### 9.6 现状与下一步（2026-10-25 收口，下个对话从这里接）
+
+#### 9.6.0 一句话现状
+- **碰撞层完成**：`.scn_col` 静态网格 + 板/窗/门/角色等动态体，射线、扫掠、静态测试、路径相交全部接上游戏的 `CollisionManager`，
+  过滤语义、返回结构、三种形状（球/盒子/胶囊）的 size 约定都有调用处依据；军工厂 1v4 用到的形状全部登记（本机 `UNSUPPORTED` 为空）。
+- **AI 孤岛机制完成**：`run1v4.py 1 300 --server-ai` 下 178/179 个 AI 模块以服务端模式导入，求生者 `MathUtils` 异常消失，模拟 1.8 倍速。
+- **角色仍原地不动**。剩两处缺口：`GeneratorUnit.ai_fix_angle/ai_fix_pos`（服务端算法缺，见 9.6.3）→ `AICommonTrigger.tick` 每帧抛；
+  `punish_start_timestamp` 已补（9.6.2），待本机复跑确认。另：服务端模式下 `world.scene.scene_detour.set_detour_flag` 每 300 帧被调 3459 次，打在桩上——**导航层是下一块原生替代**。
+
+#### 9.6.1 碰撞层（`natives/physx_collision.py` + `colworld.py`）
+
+**选型**：numpy 自写内核。pybullet 在 PyPI 上没有 Windows/py3.11 预编译包（要装 MSVC 现编），Python 接口也没有凸体扫掠。以后换后端只换 `colworld.py`。
+
+**原生接口**（`CollisionMgr.CollisionManager` 伪源码；签名全写在 `physx_collision.py` 文件头）：
+```
+hit_by_ray(s, e, face_filter, group, layer, filter_type)          无过滤：hit_by_ray(s, e, 0, 0, Layer.NORMAL)
+hit_by_ray_new(s, e, face_filter, group, ignore_types, extra_types, layer, filter_type)
+sweep_test(col, s, e, group, layer, face_filter, filter_type)     sweep_test_new(col, s, e, group, ignore, extra, layer, face_filter, filter_type)
+sweep_intersect(col, s, e, group, layer, filter_type)             sweep_intersect_new(col, s, e, group, ignore, extra, layer, filter_type)
+static_test(col, group, layer, filter_type)                       static_test_new(col, group, ignore, extra, layer, filter_type)
+col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, convex_gen])
+```
+- `collision_mgr.X_new(..., filter_rule)`：filter 无 extra/ignore 类型时调原生**旧版** `X`，否则调 `X_new`，把 `filter_rule.group_value/ignore_unit_types/extra_unit_types/layer_value/face_filter/filter_type` 拆成位置参数；
+  filter 为 None 时传 `group=0, Layer.NORMAL, EXCLUDE_FILTER`（＝什么都不排除）。`CollisionManager.col_object(obj_type, size, unit_type, layer, …)` 用 `CollisionConst.UNIT_GROUP.get(unit_type, STATIC_BODY)` 补 group。
+- **返回**：射线/扫掠 = 6 元组 `[命中, 命中点, 法线, ?, ?, 碰撞体]`（调用处只用 [0][1][2][5]/[-1]，[3][4] 无用例，填 None）；static/intersect = 碰撞体列表（`InteractiveComponent` 判 `is None`，AI 判 `if not`）。
+  `check_in_collision_static_ex_sweep_test` 用**起点=终点**的扫掠当静态测试，把 `[-1]` 当列表遍历、未命中判 None —— 零长度扫掠返回 `[True, None, None, None, None, [碰撞体…]]`。
+- **过滤语义**（`CollisionManager._modify_filter_rule` + 脚本里手写的 `air_power_extra_static_test` 反推，实现为 `physx_collision.passes`）：
+  先要 `obj.layer & layer_value`；选中 = (分组命中 `group_value` 或 类型∈extra) 且 类型∉ignore；EXCLUDE 打未选中的，INCLUDE 只打选中的。常量运行期从 `CollisionConst` 读，不写死。
+- **调用处用法**：`hit_by_ray_new` 全是视线/遮挡（手电筒、杰克隔墙技能、求生者判断监管与机之间）只用 `[0]`；`sweep_test_new` 用于根运动移动（`MotionSimulation.tick_pos`、`RootMotion(Classic)Component._check_col_in_root_motion`）、
+  被推开（`hit_pos + push_dir*半径` 回写位置）；`static_test_new` 用于走路（`TpsMoveComponent.calculate_walk_next_position`）、交互范围（`InteractiveComponent.update_interested_units`）、AI 落点校验（`verify_model`/`judge_valid`）。
+
+**真实常量**（`t_colconst.py` 本机实测）：`INCLUDE_FILTER 0 / EXCLUDE_FILTER 1 / INEQUAL 2 / EQUAL 3`；`Layer.NORMAL 1 / PHOTO 2 / DENTIST=GROCER=YIDHRA 4 / PHANTOM 8 / ALL 65535`；
+`Group`：STATIC_BODY 1 / DYNAMIC_BODY 2 / VIRTUAL_BODY 4 / ROLE 8 / PHYSICS_BODY 16 / VEHICLE 32 / SCENE_TRIGGER 64 / INTER_FILTER 128 / ATTACK_FILTER 256；BATTLE_ATTACK_EXCLUDE 332、BATTLE_INTER_EXCLUDE 204、MOVE_EXCLUDE=CAM_IGNORE_GROUP 68；
+形状 `SPHERE 0 / BOX 1 / CAPSULE 2 / CYLINDER 3 / MESH 4 / ORG_CAPSULE 7 / CONVEX_CYLINDER 8`；`UTYPE_SCENE 65535`；单位类型 `1 BUTCHER / 2 CIVILIAN / 146 SMOKE_LIGHT`（共 574 个）。
+`Filter()` 默认 group 0 / layer 1 / EXCLUDE；`RoleFilter()` 默认 group 8(ROLE) / layer 65535 / EXCLUDE。
+运行期样本：视线射线 `group=332, extra={1,2}, layer=1, EXCLUDE`；监管另一条 `group=0, extra={146}, INCLUDE`（只测烟雾，穿墙是对的）。军工厂 300 帧 2880 次射线、576 次命中。
+
+**静态地图属性是真值**：`CollisionManager.preset_collision_module` 调 `physx_collision.set_default_filter_info(Layer.ALL, Group.STATIC_BODY, UTYPE_SCENE)`，模拟器里会走到（`report` 打印来源）。
+
+**形状 size 约定**（逐个登记在 `physx_collision.SHAPE_QUERY`；未登记的形状作查询体时未命中、作动态体时不放进世界，计入 `UNSUPPORTED`）：
+| 形状 | 约定 | 依据 |
+|---|---|---|
+| SPHERE 0 | 半径 = size.y（= x = z） | `BaseBullet.build_collision` 等传 `vector(r,r,r)`；`get_col_bottom_ofs` 对 type==0 返回 `(0,-col_size.y,0)` |
+| BOX 1 | size = 半长，中心 = position，朝向 = rotation_matrix（行向量约定的旋转部分） | 迷宫墙 `BOX (13.2,15,1.2)` 摆在 `pos+(0,15,0)`、终点格 `(11,15,1)` 在 `+12.5`、`SuitcaseChecker (12,15,12)` 偏移 `+17`，按半长算底面都贴地 |
+| CAPSULE 2 | 线段沿局部 Y（rotation_matrix 第 2 行），中心 = position，**线段半长 = size.y、半径 = size.x** | `_add_collision_role`：`col_object(CAPSULE, vector(col_conf[0], col_conf[1]/2, col_conf[0]))`；`air_power_extra_static_test` 按 `position ± col_conf[1]*0.5` + 半径 `col_conf[0]` 算同一胶囊 |
+| ORG_CAPSULE 7 / CYLINDER 3 / MESH 4 | 未登记 | 侦探 / 棺材等（`convex_gen`）/ 地图变形物，军工厂 1v4 用不到 |
+
+- 角色：`col_conf = [半径, 高度]`（配表 `move_col`；大厅 NPC 写死 `(4.5, 8.0)`）；胶囊中心离地 `col_height_offset = OFFSET_HEIGHT + 高度/4`（有 `move_col_ofs` 时用其 `[1]`）。
+  `BaseUnit.init_collision` → `CollisionManager.add_collision(unit, …)` 按 `unit_type` 查 `_unit_type_add_col_func_map` 分派到 `_add_collision_*`（多数尺寸来自配表 `box_bounding` 的 `dataconf`/`offset`），
+  再由 `_add_ghost_col_to_scene(unit, col, x, height, z, …)` 放到 `单位位置 + (x, height, z)`。原生碰撞体有 `col_size` 属性（桩已补，与构造 size 同义，推断）。
+- 军工厂运行期：动态体 138 个盒子（板/窗/门等）+ 5 个胶囊（角色）。
+
+**实现要点**：
+- 动态体：碰撞体赋值 `position/rotation_matrix/size/type/enable` 时通知所在 scene_col 标脏，查询前只同步脏的；`position`/`rotation_matrix` 按副本存取（推断与原生一致：脚本都写 `col.position = …`）。
+  胶囊/球转外接多面体（12×3 段，最多大 7%）放进三角形世界；查询体本身用精确线段+半径。不参与查询的动态体集合按过滤条件缓存。
+- 盒子作查询体：静态测试 / 零长度扫掠 / 路径相交走 `ColWorld.box_overlap`（分离轴 13 轴）；**盒子连续扫掠未实现**（计数）。`sweep_intersect` 是沿路径分步重叠的近似。
+- 扫掠起点已重叠时按 t=0 命中返回——**无依据**，单独计数（`QUERY_HITS["…:起点已重叠"]`）。
+- 性能：动态体接入后一度 1.5→1.0 倍速；改为标脏同步 + 过滤缓存 + 候选键整数数组 + 动态体掩码缓存 + 射线先按物体包围盒 slab 剪枝 + 自写叉积后回到 1.3 倍速（不开孤岛）。合成场景 143 个碰撞体每次射线约 0.5–0.7 ms。
+- 调用位置记录：每种查询前 6 次的实参 + 游戏调用处（`QUERY_SAMPLES`，`SimCore.report` 打印）。
+
+**本机校验结果**：`t_colworld.py`、`t_physx.py` 全过；`colcheck.py` 军工厂（主导航 `ordnance_factory_test1.nav`）地面命中 93.5%（§9.7 为 93.9%）、沿导航边扫半径 3 胶囊被挡 9.8%（起点重叠 5.7%）、竖直射线 4199 次/秒、扫掠 626 次/秒。
+⚠ 军工厂 `nav/` 下另有 `dentist_ordnance_factory1_02.nav`（walkable 半径 1，看名字是某角色专用），`colcheck.py` 自动查找会先选它，要显式指定主导航。
+
+#### 9.6.2 服务端模式 AI 孤岛（`simcore.install_server_ai_island`）
+- 打开：`SimCore(server_ai=True)` / `run1v4.py … --server-ai`（默认关）。做法同 `exp_servermode.py`：`servercommon.Netease`→GK → 清掉 `common_cs.ai.*` → `SERVER_MODE=True` 下全量重导入（跳过 `bt_code`）→ 恢复 False →
+  给 AI 模块换 `SERVER_MODE` 恒为 True、其余属性**实时转发**的 dev_config 代理。`worlds.WorldBattleClientBase` 若已提前加载会打印警告（本机实测没有）。**不带实验里的占位值。**
+- 本机实测：导入 178 个、失败 1（`game_kernel` 没有 `LM`）、装代理 37 个；求生者 `MathUtils` 异常消失；1.8 倍速。新增打桩模块：`battle`、`battle.units.RegionAttackManager`、`entity`、`config`、`utils`、`Timer`、`LogConf`、`mobilelog`（服务端专用导入）。
+- **`punish_start_timestamp` 已补**（`sim1v4.WorldSim1v4._init_units`，求生者）：全部脚本只有 `QAAIButcher.get_in_butcher_sight_or_chase_civis` 一处读，判 `> 0`（处罚已开始），开局未受处罚 → 取 0（任何 ≤0 等价）。**待本机复跑确认**。
+
+#### 9.6.3 缺口清单（按阻塞程度）
+1. **`GeneratorUnit.ai_fix_angle` / `ai_fix_pos`**（硬阻塞：`AICommonTrigger._init_gen_fixdir` 每帧抛 → `game_tick` 中断）。已知：
+   - `iLogicGenerator.init_logic_components` 置 `self.ai_fix_pos = {}`（字典）；`ai_fix_angle` 是序列，`_init_gen_fixdir` 取 `len(gen.ai_fix_angle)` 当该机可修方位数；
+     `PatrolPolicy.patrol_move` 用 `gen.ai_fix_pos[gen.ai_fix_angle[0]]` 当巡逻点 → `ai_fix_angle` 的元素是 `ai_fix_pos` 的键、值是位置。
+   - 填充靠服务端专有方法 `gen.init_ai_fix_angle()` + `gen.precompute_pos_for_ai()`（`FoolSystem.set_position_gen` 移机后先 `ai_fix_pos.clear()` 再调这两个）——**算法不在客户端脚本里**，不能编。
+   - 下次查：`idxq.py 'fix_angle|fix_dir|fix_pos'`（客户端真人修机站位/朝向逻辑，AI 版可能同源）；配表里密码机的修机点/朝向字段；`GeneratorUnit`/`iLogicGenerator` 里与方位、交互点有关的成员。
+2. **导航层**：服务端模式下 `world.scene.scene_detour.set_detour_flag(str, int)` 300 帧 3459 次打在桩上；AI 寻路要真 Detour。`.nav`/`.tile` 已能解（§9.7，`navmesh.py`），可直接喂 recastnavigation 或自写多边形 A*。先 `usage.py 'scene_detour\.'` 摸清调用面。
+3. `GK.LM`（1 个 AI 模块导入失败）、`room.skada_mgr`、密码机/求生者其它服务端成员（§9.9 已知清单）—— 按运行期报错逐条补，每条进 `ServerRoomShim` 并注明依据。
+4. 碰撞近似项（不阻塞）：盒子连续扫掠、扫掠起点已重叠的返回、`ORG_CAPSULE`/`CYLINDER`/`MESH` 形状、胶囊多面体外接 7%。
+
+#### 9.6.4 之后的路线
+1. 缺口 1、2 补齐 → 5 个 AI 能打完一局（`check_game_over` 挂椅淘汰/逃脱）；跑 N 局统计胜率、时长、修机曲线，作为模拟器正确性检查和 RL baseline。
+2. 外部控制接口（RL 动作/观测）：把一个单位的 AI 控制器换成外部控制，其余跑行为树当陪练；先做宏动作（复用行为树节点：修某台机/救人/转点），观测从 `unit_mgr` 读结构化状态，奖励以胜负为主加修机/命中塑形。
+3. 吞吐：多进程并行环境、关掉不需要的 tick、`enable_determinism` + 固定种子。范围限于离线模拟器与训练本身，不接回真实对局。
+
+#### 9.6.5 本机怎么跑（Windows，`drivers\sim` 下；**不要加 `-I`**，numpy 在用户目录）
+```
+python t_colworld.py                     # 碰撞内核自测（合成数据）
+python t_physx.py                        # 碰撞适配层自测（假 CollisionConst + 合成地图）
+python t_colconst.py                     # 打印真实 CollisionConst 常量 / UNIT_TYPE_CONF 编号名
+python colcheck.py ..\..\res_pull\resdump_1025_015456\res_recovered.zip scene/scene_battle/ordnance_factory1/nav/ordnance_factory1.scn_col scene/scene_battle/ordnance_factory1/nav/ordnance_factory_test1.nav
+python run1v4.py 1 300 [--server-ai]     # 1v4 对局；末尾打印碰撞查询/命中/未登记形状/调用样本
+python usage.py "<调用名正则>" "" 4 20 | Out-File -Encoding utf8 x.txt   # 查调用处用法（正则里最后一个标识符用来预筛 idx）
+python pseudo.py <std_pyc 相对路径> "<qualname 正则>" | Out-File -Encoding utf8 x.txt
+```
+地图资源默认读 `res_pull/resdump_1025_015456/res_recovered.zip`，可用环境变量 `IDV_RES_ZIP` 改。PowerShell 里命令参数不要写 `<…>` 占位符（`<` 是保留运算符）。
 
 ---
 
