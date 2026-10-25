@@ -620,6 +620,7 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 | `natives/physx_collision.py`(+`bullet_collision.py`) | 碰撞体真对象 + scene_col 记录；`load(.scn_col)` 已从资源 zip（`IDV_RES_ZIP`，默认 `res_pull/resdump_1025_015456/res_recovered.zip`）读进 `ColWorld`（`scene_col.world`）；**查询仍一律未命中**，但记录每种查询前 6 次的实参 + 调用位置（`QUERY_SAMPLES`，`SimCore.report` 打印） |
 | `colworld.py` | ★ 碰撞内核（只依赖 numpy，2026-10-25）：静态网格 + 动态体(OBB→三角形) 上的 `raycast` / `capsule_overlap` / `capsule_sweep`(保守推进)，XZ 均匀网格 + 3D 包围盒预筛。合成 9 万三角形图上：竖直射线约 2500 次/秒、胶囊扫掠约 600 次/秒（本机实测待跑） |
 | `t_colworld.py` | colworld 自测：合成 `.scn_col`（含旋转物体）+ 与暴力解 / 密集采样对拍，不需要游戏资源 |
+| `t_colconst.py` | 打印碰撞适配要用的真实常量（`CollisionConst` 的过滤模式/Layer/Group/形状、`Filter`/`RoleFilter` 默认参数、`UNIT_TYPE_CONF` 编号名） |
 | `colcheck.py` | 真实地图校验：`colcheck.py <zip> <scn_col> <nav> [半径] [抽样]` → 导航顶点下方地面命中率、沿导航边扫胶囊的被挡比例、吞吐 |
 | `natives/world.py` | `scene.get_model(name)` 按 `DM.pos_info[scene_id]`（每项 = 模型名, 位置, 16f 矩阵, …）返回带变换的模型；`register_scene_models` |
 | `natives/math3d.py` | 补 `vector.__abs__`(=长度)、向量比较(按长度，推断)、`rotation.slerp`、`rotation_to_matrix`；`matrix.rotation` 改为返回旋转部分矩阵(NeoX 语义)；修 `matrix_to_rotation` 迹≤0 分支 |
@@ -662,6 +663,16 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
      - 运行期计数：军工厂 300 帧里 `hit_by_ray_new` 2880 次（每帧约 10 次），其余查询 0 次——因为单位都没在走（见下）。
    - **同一次运行里 5 个角色全程原地不动、Y 恒定**（不再是"Y 每帧上升"）。挡住移动的是行为树每步都抛的服务端专有成员异常，不是碰撞：
      监管 `punish_start_timestamp`（求生者缺）、求生者 `NameError: MathUtils`（客户端模式不导入）、`AICommonTrigger._init_gen_fixdir` 缺 `GeneratorUnit.ai_fix_angle`——正是第 2 步"AI 孤岛"的清单。
+   - **原生层接口（2026-10-25，`CollisionMgr.CollisionManager` 伪源码）**：全部签名写在 `natives/physx_collision.py` 文件头。要点：
+     - `collision_mgr.X_new(..., filter_rule)` 在 filter 没有 extra/ignore 类型时调原生**旧版** `X`，有时调原生 `X_new`，把 `filter_rule.group_value/ignore_unit_types/extra_unit_types/layer_value/face_filter/filter_type` 拆成位置参数；filter 为 None 时传 `group=0, Layer.NORMAL, EXCLUDE_FILTER`（＝什么都不排除）。
+     - 过滤语义（`_modify_filter_rule` + 脚本里手写的 `air_power_extra_static_test` 反推）：先要 `obj.layer & layer_value`；选中 = (分组命中 `group_value` 或 类型∈extra) 且 类型∉ignore；EXCLUDE 打未选中的，INCLUDE 只打选中的。
+     - 运行期样本：`RoleFilter()` → `group=332`(=BATTLE_ATTACK_EXCLUDE=VIRTUAL|ROLE|SCENE_TRIGGER|ATTACK_FILTER)、`extra={1,2}`、`layer=1`、`filter_type=1`；监管视线另有 `group=0, extra={146}, filter_type=0`。
+     - `sweep_test_new(...)[-1]`：`check_in_collision_static_ex_sweep_test` 用起点=终点的扫掠当静态测试，并把 `[-1]` 当**列表**遍历；其它调用处 `[-1]`/`[5]` 是单个碰撞体（`.cid`）。原生在零长度时返回结构不同，接扫掠时要分开处理。
+     - `Group`：STATIC_BODY 1 / DYNAMIC_BODY 2 / VIRTUAL_BODY 4 / ROLE 8 / PHYSICS_BODY 16 / VEHICLE 32 / SCENE_TRIGGER 64 / INTER_FILTER 128 / ATTACK_FILTER 256；MOVE_EXCLUDE=CAM_IGNORE_GROUP=68。
+   - ✅ **射线已接**：`hit_by_ray`/`hit_by_ray_new` 对静态地图走 `ColWorld.raycast`，返回 `[True, 命中点, 法线, None, None, 静态碰撞体]`（[3][4] 无用例，填 None）。
+     静态地图的 group/layer/utype：游戏若调用模块函数 `set_default_filter_info(layer, group, utype, color)` 就用实参，否则推断为 STATIC_BODY / Layer.NORMAL / 无类型（`report` 打印来源）。动态体暂不参与。
+     `EXCLUDE_FILTER` 等常量运行期从 `common_cs.CollisionConst` 读，不写死；`t_colconst.py` 打印全部真实常量和 `UNIT_TYPE_CONF` 编号名。
+   - 导航注意：军工厂 `nav/` 下有两份 `.nav`：`ordnance_factory_test1.nav`（主导航，walkable 半径 6）和 `dentist_ordnance_factory1_02.nav`（半径 1，看名字是某角色专用）。`colcheck.py` 要显式指定前者；用后者时地面 87.7%、沿边扫掠被挡 36%（边贴墙 1 个单位，半径 3 的胶囊必然蹭墙）。
    - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
 3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。

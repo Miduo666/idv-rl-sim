@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 """NeoX physx_collision / bullet_collision 的替代（接口同形，CollisionManager.init_collision_module 按 room.use_bullet 二选一）。
-现阶段：碰撞体是真对象（cid/位置/旋转/尺寸），scene_col 记录动态体；load(.scn_col) 已把地图网格读进 colworld.ColWorld（self.world），
-查询仍一律"未命中"并计数 —— 参数含义/返回字段还没从调用处反推出来，先记录每种查询前 SAMPLE_N 次的实参与调用位置(QUERY_SAMPLES)。
-地图资源：环境变量 IDV_RES_ZIP，否则 <仓库>/res_pull/resdump_1025_015456/res_recovered.zip（§9.5.4）。
-查询的未命中返回值按调用处反推：
-  sweep_test(_new) / hit_by_ray(_new) -> [hit, ...6 项]，[0] 为是否命中（CollisionManager.sweep_test_offset_new 无碰撞体时返回 [False]+[None]*5）
-  static_test(_new) / sweep_intersect(_new) -> 碰到的碰撞体列表（调用处 `if not res` / 遍历）"""
+现阶段：碰撞体是真对象（cid/位置/旋转/尺寸），scene_col 记录动态体；load(.scn_col) 已把地图网格读进 colworld.ColWorld（self.world）。
+每种查询记录前 SAMPLE_N 次的实参与调用位置(QUERY_SAMPLES)。地图资源：环境变量 IDV_RES_ZIP，否则 <仓库>/res_pull/resdump_1025_015456/res_recovered.zip（§9.5.4）。
+
+原生接口（CollisionMgr.CollisionManager 的调用处，SKILL §9.6）：
+  hit_by_ray(s, e, face_filter, group, layer, filter_type)          无过滤时 hit_by_ray(s, e, 0, 0, Layer.NORMAL)
+  hit_by_ray_new(s, e, face_filter, group, ignore_types, extra_types, layer, filter_type)
+  sweep_test(col, s, e, group, layer, face_filter, filter_type)     sweep_test_new(col, s, e, group, ignore, extra, layer, face_filter, filter_type)
+  sweep_intersect(col, s, e, group, layer, filter_type)             sweep_intersect_new(col, s, e, group, ignore, extra, layer, filter_type)
+  static_test(col, group, layer, filter_type)                       static_test_new(col, group, ignore, extra, layer, filter_type)
+返回：射线/扫掠 = 6 元组 [命中, 命中点, 法线, ?, ?, 碰撞体]（[3][4] 调用处没见用过，填 None）；static/intersect = 碰撞体列表。
+✅ 射线已接 ColWorld（只测静态地图，动态体的形状语义还没确认）；扫掠/静态测试仍一律未命中。"""
 import itertools, collections, os, sys, zipfile
 import simenv
 from math3d import vector, matrix
@@ -52,6 +57,42 @@ def _caller(depth=3):
 
 _cid = itertools.count(1)
 NO_HIT = (False, None, None, None, None, None)
+QUERY_HITS = collections.Counter()
+
+# 静态地图网格的过滤属性。set_default_filter_info(layer, group, utype, color) 被游戏调用时按实参覆盖（STATIC_SOURCE 记来源）；
+# 没调用时的默认值是推断：分组 Group.STATIC_BODY（名字），层 Layer.NORMAL（各"无过滤"调用都传 Layer.NORMAL 且必须打得到地图）
+STATIC_FILTER = {"group": None, "layer": None, "utype": None}
+STATIC_SOURCE = ["推断默认值"]
+
+
+def set_default_filter_info(layer, group, utype, color=None, *a):
+    STATIC_FILTER.update(group=group, layer=layer, utype=utype)
+    STATIC_SOURCE[:] = ["set_default_filter_info%r" % ((layer, group, utype, color) + a,)]
+
+
+def _cc():
+    from common_cs import CollisionConst
+    return CollisionConst
+
+
+def _static_attrs():
+    cc = _cc()
+    g = STATIC_FILTER["group"]
+    l = STATIC_FILTER["layer"]
+    return (cc.Group.STATIC_BODY if g is None else g), (cc.Layer.NORMAL if l is None else l), STATIC_FILTER["utype"]
+
+
+def passes(obj_group, obj_layer, obj_utype, group_value, ignore, extra, layer_value, filter_type):
+    """一个碰撞体是否参与查询。依据：
+    - 层：air_power_extra_static_test（脚本里手写的 static_test）要求 `col.layer & layer_value`；
+    - 分组/类型：CollisionManager._modify_filter_rule —— EXCLUDE 时 extra(T)+un_ignore(T) 使 T 被排除，INCLUDE 时 ignore(T)+un_extra(T) 使 T 不被包含。
+      即 选中 = (分组命中 group_value 或 类型 ∈ extra) 且 类型 ∉ ignore；EXCLUDE 模式打"未选中"的，INCLUDE 模式只打"选中"的。"""
+    if not (obj_layer & layer_value):
+        return False
+    sel = bool(obj_group & group_value) or (obj_utype is not None and obj_utype in extra)
+    if obj_utype is not None and obj_utype in ignore:
+        sel = False
+    return (not sel) if filter_type == _cc().EXCLUDE_FILTER else sel
 
 
 class _Base(object):
@@ -90,6 +131,7 @@ class scene_col(_Base):
         self.path = None
         self.col_meshes = []
         self.world = None
+        self._static = None                      # 必须显式初始化：_Base.__getattr__ 对缺失属性返回桩
 
     def __bool__(self): return True
     def add_to_world(self, *a): pass
@@ -131,10 +173,38 @@ class scene_col(_Base):
             QUERY_SAMPLES[name].append((_caller(), _fmt(a)))
         return ret
 
+    def _ray(self, name, a, s, e, group, ignore, extra, layer, filter_type):
+        self._q(name, None, a)
+        cc = _cc()
+        if layer is None:
+            layer = cc.Layer.NORMAL
+        if filter_type is None:                  # 5 参数的无过滤调用：与 sweep/static 的无过滤路径一致，按 EXCLUDE(什么都不排除) 处理（推断）
+            filter_type = cc.EXCLUDE_FILTER
+        if self.world is None or not passes(*_static_attrs(), group, ignore or (), extra or (), layer, filter_type):
+            return list(NO_HIT)
+        h = self.world.raycast((s.x, s.y, s.z), (e.x, e.y, e.z))
+        if h is None:
+            return list(NO_HIT)
+        QUERY_HITS[name] += 1
+        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), None, None, self._static_obj()]
+
+    def _static_obj(self):
+        """命中静态地图时返回的碰撞体：有 cid（不在 collision_dict 里，get_unit 得 None）、group/layer/unit_type 同静态过滤属性。"""
+        o = self._static
+        if o is None:
+            o = self._static = col_object()
+        o.group, o.layer, o.unit_type = _static_attrs()
+        return o
+
+    def hit_by_ray(self, s, e, face_filter=0, group=0, layer=None, filter_type=None, *a):
+        return self._ray("hit_by_ray", (s, e, face_filter, group, layer, filter_type) + a, s, e, group, (), (), layer, filter_type)
+
+    def hit_by_ray_new(self, s, e, face_filter=0, group=0, ignore=(), extra=(), layer=None, filter_type=None, *a):
+        return self._ray("hit_by_ray_new", (s, e, face_filter, group, ignore, extra, layer, filter_type) + a,
+                         s, e, group, ignore, extra, layer, filter_type)
+
     def sweep_test(self, *a): return self._q("sweep_test", list(NO_HIT), a)
     def sweep_test_new(self, *a): return self._q("sweep_test_new", list(NO_HIT), a)
-    def hit_by_ray(self, *a): return self._q("hit_by_ray", list(NO_HIT), a)
-    def hit_by_ray_new(self, *a): return self._q("hit_by_ray_new", list(NO_HIT), a)
     def static_test(self, *a): return self._q("static_test", [], a)
     def static_test_new(self, *a): return self._q("static_test_new", [], a)
     def sweep_intersect(self, *a): return self._q("sweep_intersect", [], a)
