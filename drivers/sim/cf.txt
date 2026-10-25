@@ -1,0 +1,60 @@
+---- ClientUnits/BaseUnit.pyc :: BaseUnit.__init__(self, params):
+    187   self.col_conf = None
+    188   self.col_height_offset = cs_const.OFFSET_HEIGHT
+    190   self.col_ofs_conf = None
+---- ClientUnits/BaseUnit.pyc :: BaseUnit.reset_unit_collision(self, args):
+    573   col_conf = self.params.get('move_col')
+    574   self.col_conf = col_conf
+    575   if not self.col_ofs_conf: goto L124
+---- ClientUnits/BaseUnit.pyc :: BaseUnit.reset_unit_collision(self, args):
+    574   self.col_conf = col_conf
+    575   if not self.col_ofs_conf: goto L124
+    576   self.col_height_offset = self.col_ofs_conf[1]
+---- ClientUnits/BaseUnit.pyc :: BaseUnit.reset_unit_collision(self, args):
+    583   self.col_conf = [radius, height]
+    584   self.col_height_offset = ((height / 4.0) + h_off)
+    L280:
+---- ClientUnits/BaseUnit.pyc :: BaseUnit.init_collision(self, add):
+    1153  col_conf = self.data.get('move_col')
+    1154  self.col_ofs_conf = self.data.get('move_col_ofs')
+    1155  if not col_conf: goto L302
+---- ClientUnits/BaseUnit.pyc :: BaseUnit.init_collision(self, add):
+    1156  self.col_conf = col_conf
+    1157  if not self.col_ofs_conf: goto L244
+    1158  self.col_height_offset = self.col_ofs_conf[1]
+---- ClientUnits/ButcherChxyUnit.pyc :: ButcherChxyUnit.__init__(self, params):
+    87    self.col_conf = owner.col_conf
+    88    item = owner.get_hold_items()[0]
+    89    if not item: goto L1116
+---- ClientUnits/ButcherChxyUnit.pyc :: ButcherChxyUnit.__init__(self, params):
+    95    self.col_conf = params.get('move_col')
+    L1182:
+    97    self.shape_time = int(creature_data.get('creature_params2', '3'))
+---- ClientUnits/CityUnits/BirthPointUnit.pyc :: BirthPointUnit.__init__(self, params):
+    44    self.col_conf = (4.5, 8.0)
+    45    self.col_height_offset = 8.0
+    46    self.init_model_params()
+---- ClientUnits/CityUnits/CityUnit.pyc :: CityUnit.__init__(self, params):
+    108   self.col_conf = (4.5, 8.0)
+    109   self.col_height_offset = 8.0
+    110   self.init_collision()
+---- ClientUnits/CityUnits/CityUnit.pyc :: CityUnit.change_model_scale(self, scale, stop_inter, reset_scale, f_unit):
+    2078  player_unit.col_conf = ((4.5 * scale), (8.0 * scale))
+    2079  player_unit.col_height_offset = (8.0 * scale)
+    2080  if not stop_inter: goto L258
+---- ClientUnits/CityUnits/CustomKeeperUnit.pyc :: CustomKeeperUnit.__init__(self, params):
+    28    self.col_conf = (4.5, 8.0)
+    29    self.col_height_offset = 8.0
+    30    self.b_unlocked_by_event = False
+---- ClientUnits/CityUnits/CustomKeeperUnit.pyc :: CustomKeeperUnit.update_col_para(self):
+    79    self.col_conf = (col_params[0], col_params[1])
+    80    self.col_height_offset = col_params[2]
+    80    return None
+---- ClientUnits/CityUnits/TmpCustomKeeperUnit.pyc :: TmpCustomKeeperUnit.__init__(self, params):
+    42    self.col_conf = (4.5, 8.0)
+    43    self.col_height_offset = 8.0
+    44    self.init_model_params()
+---- ClientUnits/CopycatBangNpcUnit.pyc :: CopycatBangNpcUnit.init_collision(self, add):
+    177   self.col_conf = (4.5, 15)
+    178   if not add: goto L498
+    179   col_mgr = GK.g_world_mgr.cur_world.get_col_mgr()

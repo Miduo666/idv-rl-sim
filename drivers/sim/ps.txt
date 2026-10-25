@@ -1,0 +1,5 @@
+---- common_cs/ai/qaai_butcher/QAAIButcher.pyc :: QAAIButcher.get_in_butcher_sight_or_chase_civis(self, remove_in_hook, includ
+    604   if not (civ.punish_start_timestamp > 0): goto L1046
+    604   if (civ2self_dis < 200): goto L988
+    604   if not (useful_civis_len == 1): goto L1046
+    L988:

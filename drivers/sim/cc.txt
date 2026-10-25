@@ -1,0 +1,26 @@
+def Group():
+    88    __module__ = __name__
+    88    __qualname__ = 'Group'
+    89    STATIC_BODY = 1
+    90    DYNAMIC_BODY = 2
+    91    VIRTUAL_BODY = 4
+    92    ROLE = 8
+    93    PHYSICS_BODY = 16
+    94    VEHICLE = 32
+    95    SCENE_TRIGGER = 64
+    96    INTER_FILTER = 128
+    97    ATTACK_FILTER = 256
+    98    COPYCAT_FILTER = 513
+    99    UGC_SCENE_TRANS_FILTER = 1024
+    101   BATTLE_INTER_EXCLUDE = 204
+    102   BATTLE_ATTACK_EXCLUDE = 332
+    103   CAM_IGNORE_GROUP = 68
+    104   MOVE_EXCLUDE = 68
+    107   NOTHING = 0
+    108   ALL = 4294967295
+    108   return None
+
+def RoleFilter.__init__(self, group_value, ignore_unit_types, extra_unit_types, layer_value, filter_type):
+    525   super(RoleFilter, self).__init__(group_value=group_value, ignore_unit_types=ignore_unit_types, extra_unit_types=extra_unit_types, layer_value=layer_value, filter_type=filter_type)
+    525   return None
+

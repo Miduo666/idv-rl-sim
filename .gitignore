@@ -8,3 +8,7 @@ drivers/sim/idx.tsv
 
 __pycache__/
 *.pyc
+
+# 第三方源码（构建脚本按固定版本拉取）与编译产物
+tools/_deps/
+drivers/sim/natives/bin/

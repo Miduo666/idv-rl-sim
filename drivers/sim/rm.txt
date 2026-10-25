@@ -1,0 +1,9 @@
+def RootMotionComponent._fix_root_motion_hit_col(self, col_result, check_params):
+    1271  func_key = 'intrp_find_pos'
+    1272  fix_pos_func = {'intrp_find_pos': self._fix_hit_col_intrp_find_pos}.get(func_key)
+    1275  valid_new_pos = None
+    1276  if not func_key: goto L94
+    1277  valid_new_pos = fix_pos_func(col_result, check_params)
+    L94:
+    1278  return (True, valid_new_pos)
+

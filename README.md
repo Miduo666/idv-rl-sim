@@ -38,6 +38,8 @@
 2. 转成标准 3.11 pyc：`python -I drivers/sim/convert_all.py drivers/sim all_pyc std_pyc`（SKILL §9.1）。
 3. 重建名字索引：`python drivers/sim/make_idx.py`（`idxq.py`、`usage.py` 依赖它；重建出的索引比旧版多收录一些长字符串，不影响查询）。
 4. 地图资源 `res_pull/resdump_1025_015456/res_recovered.zip`：只能从设备进程内导出（SKILL §9.5.3–9.5.4，注入有封号风险）。
+   设备场景包 `res_pull/scene_pkg/`（`scene.idx` + `scene2~5.wpk`，1.76GB）从设备拉（SKILL §9.5.1），里面有导出包缺的导航/tilecache（SKILL §9.10）。
+5. 编译导航库（官方 Detour v1.6.0）：`python drivers/sim/natives/detour_c/build.py`，需要 git + g++（Windows 用 mingw）；源码拉到 `tools/_deps/`，产物在 `drivers/sim/natives/bin/`，都不入库。
 
 ## 脱敏
 
@@ -49,11 +51,12 @@
 - 新方向 / 设计选择先给结论和方案，确认后再写代码；只做点名的项，调研中的旁支发现记进 SKILL。
 - 模拟器的垫片（服务端房间/单位接口）每条注明调用处与推断依据；推断不出的值不要编。
 
-## 现状（2026-10-25 收口，详见 SKILL §9.6）
+## 现状（2026-10-26，详见 SKILL §9.6、§9.10）
 
 军工厂 1v4：1 监管 + 4 求生者都挂人机行为树、每帧在跑，整图交互物齐全。
 - **碰撞层完成**：`drivers/sim/colworld.py`（numpy 碰撞内核）+ `natives/physx_collision.py`（接游戏 `CollisionManager`），射线/扫掠/静态测试/路径相交、过滤语义、球/盒子/胶囊三种形状都有调用处依据；自测 `t_colworld.py`、`t_physx.py`。
 - **服务端模式 AI 孤岛完成**：`python run1v4.py 1 300 --server-ai`，人机 AI 走服务端完整逻辑。
-- **角色仍不动**，剩两处缺口：密码机 `ai_fix_angle/ai_fix_pos`（服务端算法不在客户端脚本里）、导航层（Detour 替代）。之后才是 RL 动作/观测接口。
+- **导航层完成**：官方 Detour v1.6.0 接 `scene_detour`（`natives/detour.py`），自测 `t_detour.py`。普通导航与 tilecache 资源缺，暂回退到 AI 导航。
+- **角色仍不动**，只剩一处缺口：密码机 `ai_fix_angle/ai_fix_pos`（服务端算法不在客户端脚本里）。之后才是 RL 动作/观测接口。
 
-本机运行（Windows，`drivers\sim` 下，不要加 `-I`）：`python t_physx.py`、`python run1v4.py 1 300 --server-ai`，完整命令见 SKILL §9.6.5。
+本机运行（Windows，`drivers\sim` 下，不要加 `-I`）：先 `python natives\detour_c\build.py`，再 `python t_detour.py`、`python run1v4.py 1 300 --server-ai`，完整命令见 SKILL §9.6.5。

@@ -129,6 +129,10 @@ class SimCore(object):
             print("   [%s]" % name)
             for where, args in samples:
                 print("      %s  %r" % (where, args))
+        import detour
+        print("== 导航载入:", detour.LOADED)
+        print("== 导航查询:", dict(detour.QUERIES), " 回退到 AI 导航:", dict(detour.FALLBACK),
+              " 终点不可达(部分路径):", dict(detour.PARTIAL), " 推断/空操作:", dict(detour.UNIMPL))
         simenv.report(top)
 
 

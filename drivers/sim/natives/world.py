@@ -42,6 +42,15 @@ class scene(_Base):
         self.__dict__["_named"] = {}
         self.__dict__["valid"] = True
 
+    @property
+    def scene_detour(self):
+        # 原生导航对象（NavManager.load_scene_nav_mesh: self._detour = self.room.scene.scene_detour），官方 Detour 替代见 natives/detour.py
+        d = self.__dict__.get("_detour")
+        if d is None:
+            import detour
+            d = self.__dict__["_detour"] = detour.scene_detour()
+        return d
+
     def get_model(self, name, *a):
         m = self._named.get(name)
         if m is None and name in SCENE_MODELS:

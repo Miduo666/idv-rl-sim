@@ -1,0 +1,11 @@
+---- common_cs/ai/AICommonTrigger.pyc :: AICommonTrigger._init_gen_fixdir(self):
+    355   self._gen_fix_dir[gen.uid] = len(gen.ai_fix_angle)
+    355   goto L80
+    L152:
+    354   return None
+---- common_cs/ai/ai_env_unit/butcher/policy/PatrolPolicy.pyc :: PatrolPolicy.patrol_move(self):
+    325   patrol_pos = self.cur_patrol_unit.ai_fix_pos[self.cur_patrol_unit.ai_fix_angle[0]]
+    325   goto L240
+    L190:
+    327   patrol_pos = self.cur_patrol_unit.get_position3()
+    L240:

@@ -726,6 +726,7 @@ col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, 
   `room.get_detour_distance(but_pos, civi_pos, NAV_MESH_TILECACHE)` 算距离，导航层还是桩（`NavManager._detour` 为假 → 返回 None），每帧中断监管决策。
   ⚠ 不是恐惧值：求生者 `fear_num` 走共用层 `FearNumComponent`（`iCommonCivilian.init_common_logic` 创建），本机实测 4 个求生者都是 0.0；§9.9 清单里"恐惧值为 None"那条是误判。
   → **Detour 导航层已是硬阻塞**（9.6.3-2）。角色仍原地不动。
+- **2026-10-26 导航层接上后**（§9.10）：`dis=None` 消失；唯一剩下的是密码机 `ai_fix_angle`（`AICommonTrigger._init_gen_fixdir` 每帧中断），角色仍不动。1.1 倍速。
 
 #### 9.6.3 缺口清单（按阻塞程度）
 1. **`GeneratorUnit.ai_fix_angle` / `ai_fix_pos`**（硬阻塞：`AICommonTrigger._init_gen_fixdir` 每帧抛 → `game_tick` 中断）。已知：
@@ -733,7 +734,7 @@ col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, 
      `PatrolPolicy.patrol_move` 用 `gen.ai_fix_pos[gen.ai_fix_angle[0]]` 当巡逻点 → `ai_fix_angle` 的元素是 `ai_fix_pos` 的键、值是位置。
    - 填充靠服务端专有方法 `gen.init_ai_fix_angle()` + `gen.precompute_pos_for_ai()`（`FoolSystem.set_position_gen` 移机后先 `ai_fix_pos.clear()` 再调这两个）——**算法不在客户端脚本里**，不能编。
    - 下次查：`idxq.py 'fix_angle|fix_dir|fix_pos'`（客户端真人修机站位/朝向逻辑，AI 版可能同源）；配表里密码机的修机点/朝向字段；`GeneratorUnit`/`iLogicGenerator` 里与方位、交互点有关的成员。
-2. **导航层**：服务端模式下 `world.scene.scene_detour.set_detour_flag(str, int)` 300 帧 3459 次打在桩上；AI 寻路要真 Detour。`.nav`/`.tile` 已能解（§9.7，`navmesh.py`），可直接喂 recastnavigation 或自写多边形 A*。先 `usage.py 'scene_detour\.'` 摸清调用面。
+2. ~~**导航层**~~ —— **2026-10-26 已接官方 Detour（§9.10）**，监管 `dis=None` 已解；普通导航与 tilecache 资源缺，暂回退到 AI 导航（§9.10）。
 3. `GK.LM`（1 个 AI 模块导入失败）、`room.skada_mgr`、密码机/求生者其它服务端成员（§9.9 已知清单）—— 按运行期报错逐条补，每条进 `ServerRoomShim` 并注明依据。
 4. 碰撞近似项（不阻塞）：盒子连续扫掠、扫掠起点已重叠的返回、`ORG_CAPSULE`/`CYLINDER`/`MESH` 形状、胶囊多面体外接 7%。
 
@@ -753,6 +754,45 @@ python usage.py "<调用名正则>" "" 4 20 | Out-File -Encoding utf8 x.txt   # 
 python pseudo.py <std_pyc 相对路径> "<qualname 正则>" | Out-File -Encoding utf8 x.txt
 ```
 地图资源默认读 `res_pull/resdump_1025_015456/res_recovered.zip`，可用环境变量 `IDV_RES_ZIP` 改。PowerShell 里命令参数不要写 `<…>` 占位符（`<` 是保留运算符）。
+
+### 9.10 ★ 导航层：官方 Detour（2026-10-26，`natives/detour.py` + `natives/detour_c/`）
+
+**现状**：`room.scene.scene_detour` 换成官方 recastnavigation **v1.6.0** 的 Detour（C++ 编成共享库，ctypes 调用），游戏的 `.nav/.tile` 原样载入。
+1v4 里 300 帧：3744 次寻路、2315 次取高度；**监管行为树 `GlobalCarryScoreCal` 的 `dis=None` 异常消失**，角色高度贴到导航面。剩下的阻塞只有密码机修机站位（9.6.3-1）。
+
+**构建**：`python drivers/sim/natives/detour_c/build.py`（首次把 v1.6.0 浅克隆到 `tools/_deps/`，g++ 直接编 `Detour/Source/*.cpp` + `detour_c.cpp`；
+Windows 用本机 mingw 静态链接运行库 → `natives/bin/detour_c.dll`，Linux → `libdetour_c.so`）。源码和产物都在 `.gitignore`，云端/新机器先跑一次 build。
+
+**格式对应**：`.nav` = MSET 总表（`TESM`，orig/tileW/tileH/maxTiles/maxPolys + 块名表）；`.tile` 前 8 字节 `[-1][长度]` 正是 Recast 示例的 `NavMeshTileHeader{tileRef, dataSize}`，
+后面是标准 `DNAV` v7 数据，直接 `dtNavMesh::addTile`。军工厂 AI 导航 106/106 块载入、0 失败。maxTiles/maxPolys 组合（1024/4096、4096/1024、2048/2048）在 32 位 polyRef 下 salt 位都够。
+
+**接口**（`NavManager` 伪源码里 `self._detour.*` 的全部调用，签名写在 `detour.py` 文件头）：
+- 有依据：`add_mesh/remove_mesh/load_mesh(名, 路径[, 偏移])`→bool、`set_detour_flag(名, flag)`=查询过滤 include 标志（游戏常用 65531/65529）、`set_detour_extension(名, 半尺寸)`=最近多边形搜索范围、
+  `get_path`→`[vector]`|None（`get_detour_distance` 逐段求和；<2 点当 0）、`find_nearest_poly/get_nearest_nav_point`→vector|None（`get_feasible_point` 等用）、
+  `get_poly_ref(名, bmin, bmax, n)`→refs、`find_polys_around_circle`→refs、`set_poly_flag/get_poly_flag`。
+- **推断**（计入 `detour.UNIMPL`）：`get_height` = 搜索范围内最近多边形在 (x,z) 的高度（点不在投影内取最近点高度）；`get_vertical_height(…, floor_flag)` = 竖直列各层高度中取 y 以下最高（否则取最近）；
+  `get_layer_nav_points` = 竖直列各层点；`get_path_with_flag` 的 flags = 各拐点所在多边形标志（使用方都没读）；终点不可达时返回到最近处的部分路径（Detour 默认行为，计入 `PARTIAL`）。
+  `poly_search` 参数语义未知，未使用。
+- tilecache 动态障碍 `add_*_obstacle/remove_*/update_navmesh`：`NavManager` 只在 `tc_init_done` 时调用，tilecache 未载入 → 空操作计数。
+
+**★ flags=0 的多边形是不连通区域**：军工厂 AI 导航 4808 个多边形里 1598 个 flags=0（面积反而更大，高处多，90 分位高度 42），与 flags≠0 的多边形**块内没有一条相邻边** →
+地图外/屋顶等不可达片区。Detour 过滤 `(flags & include) != 0` 永远排除它们，与游戏同库行为一致。自测/采样必须只在 `flags & 65531` 的多边形上取点（第一次全量采样误判成 33% 查询失败）。
+
+**★ 缺资源与回退**：导出包（§9.5.4）只有配表里的 `server_nav`（= AI 导航）。军工厂运行期还要：普通导航 `scene/…/nav/ordnance_factory1.nav`（`utils.get_default_nav_mesh_file(scene_path)`）、
+tilecache 导航 `…/ordnance_factory1_dynamic.nav` + `…_dynamic_cache.tilecache`（`NavManager.get_tilecache_path`，**监管打分用的就是 `NAV_MESH_TILECACHE`**）—— 都缺。
+- 回退：载入失败的网格查询落到已载入的 `ai_` 网格，计数 `detour.FALLBACK`（军工厂 300 帧：tc 3456 次、普通 6 次）。依据：`NavManager.set_poly_flag/get_poly_flag/get_detour_path_check_flag`
+  在 tilecache 未载入时自己把 `NAV_MESH_TILECACHE` 换成 `NAV_MESH_AI`；普通导航的回退**没有这条依据，是近似**。`SIM_NAV_FALLBACK=0` 关闭。
+- **资源在设备场景包里**（已复制到 `res_pull/scene_pkg/`，1.76GB：`scene.idx` + `scene2~5.wpk`；热更脚本包在 `res_pull/hotres/`）：按魔数清点 `data/scene_classify.tsv` →
+  **MSET 222 个（导出包有 67）、分块 15518 个（有 3513）、`TEST` 11 个（= .tilecache，导出包 0 个）**。`drivers/sim/nav_hunt.py` 已全部解到 `res_pull/nav_hunt/`（+`summary.json`）。
+  所有 MSET 原点都是 (0,0,0)、块 256（牙医 128）→ 按原点分不出是哪张图，要按分块内容的世界包围盒配对（分块按内容寻址，块名表只有 `x_y_layer.tile`）。
+  `TEST` 是 NeoX 自定格式：`TEST` + version 1 + 块数 + 参数段 + 块名表（`x_y_layer.tile`）+ 结尾一段 XML（`<offmeshlinks>`），压缩层是另外的文件（格式未认出，没有标准 `RLTD` 魔数）。
+
+**校验**（`t_detour.py`，真实资源）：块数 = 块名表、addTile 0 失败；2000 个可走多边形中心取高度 99.8% 吻合（斜坡多边形按细节网格高度，容差放宽到竖直跨度/2）；
+可走区域随机 300 对寻路 300/300 成功、路径长度都 ≥ 直线距离（含穿墙检查约 9 ms/次）；缺失网格载入返回 False 并回退计数。
+（信息）路径段抬高后撞到 `.scn_col`：离地 8/15/25 为 9.5/7.5/6.7%；平地段离地 8 撞墙（法线水平）约 7%，**集中在主厂房（物体 352/355，约 300×138×200）与两处地下室（343/927，下探到 y≈-86）**——
+是游戏两份数据之间的一致性问题（门洞 / 地下室盖板 / 导航边缘简化，待可视化确认），不是封装问题，不作通过条件。
+
+**下一步（导航层内）**：① 从场景包按内容找回军工厂普通导航与 tilecache（分块按世界包围盒配对；`TEST` 压缩层格式要认）→ 换掉回退；② tilecache 认出来后接 DetourTileCache（动态障碍：板子倒下等）。
 
 ---
 
