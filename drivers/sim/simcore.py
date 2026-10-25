@@ -122,6 +122,11 @@ class SimCore(object):
         print("== math3d 缺失:", sorted(self.math3d.MISSING.items(), key=lambda x: -x[1])[:20])
         import physx_collision
         print("== 碰撞查询(暂一律未命中):", dict(physx_collision.QUERIES))
+        print("== scn_col 载入:", physx_collision.LOADED)
+        for name, samples in sorted(physx_collision.QUERY_SAMPLES.items()):
+            print("   [%s]" % name)
+            for where, args in samples:
+                print("      %s  %r" % (where, args))
         simenv.report(top)
 
 

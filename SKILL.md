@@ -617,7 +617,10 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 | `pseudo.py` | ★ 3.11 字节码 → 伪源码（栈模拟折叠表达式，跳转写 goto）。`python pseudo.py worlds/X.pyc '函数名正则'`。pycdc 不支持 3.11（MAKE_CELL 直接放弃），别再试 |
 | `usage.py` | 某调用的结果在调用方怎么用：`python usage.py 'collision_mgr\.hit_by_ray_new\(' common_cs 3 6` |
 | `idxq.py` | 查 idx.tsv：`python idxq.py '^ai_id$' [路径前缀]`（输出别直接接 `Select-Object -First`，会 OSError，先重定向到文件） |
-| `natives/physx_collision.py`(+`bullet_collision.py`) | 碰撞体真对象 + scene_col 记录；**查询暂一律未命中**（返回形状按调用处反推，见文件头） |
+| `natives/physx_collision.py`(+`bullet_collision.py`) | 碰撞体真对象 + scene_col 记录；`load(.scn_col)` 已从资源 zip（`IDV_RES_ZIP`，默认 `res_pull/resdump_1025_015456/res_recovered.zip`）读进 `ColWorld`（`scene_col.world`）；**查询仍一律未命中**，但记录每种查询前 6 次的实参 + 调用位置（`QUERY_SAMPLES`，`SimCore.report` 打印） |
+| `colworld.py` | ★ 碰撞内核（只依赖 numpy，2026-10-25）：静态网格 + 动态体(OBB→三角形) 上的 `raycast` / `capsule_overlap` / `capsule_sweep`(保守推进)，XZ 均匀网格 + 3D 包围盒预筛。合成 9 万三角形图上：竖直射线约 2500 次/秒、胶囊扫掠约 600 次/秒（本机实测待跑） |
+| `t_colworld.py` | colworld 自测：合成 `.scn_col`（含旋转物体）+ 与暴力解 / 密集采样对拍，不需要游戏资源 |
+| `colcheck.py` | 真实地图校验：`colcheck.py <zip> <scn_col> <nav> [半径] [抽样]` → 导航顶点下方地面命中率、沿导航边扫胶囊的被挡比例、吞吐 |
 | `natives/world.py` | `scene.get_model(name)` 按 `DM.pos_info[scene_id]`（每项 = 模型名, 位置, 16f 矩阵, …）返回带变换的模型；`register_scene_models` |
 | `natives/math3d.py` | 补 `vector.__abs__`(=长度)、向量比较(按长度，推断)、`rotation.slerp`、`rotation_to_matrix`；`matrix.rotation` 改为返回旋转部分矩阵(NeoX 语义)；修 `matrix_to_rotation` 迹≤0 分支 |
 | `simpatch.py` | 新增 `install_traceback_capture`（游戏吞异常都走 `TracebackManager().on_traceback`）、`count_calls`（调用链计数诊断） |
@@ -647,7 +650,12 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 
 ### 9.6 下一步
 1. **碰撞层**（硬阻塞，角色不会正确移动）：`physx_collision.scene_col` 实现 `load(.scn_col)` + `sweep_test/sweep_intersect/static_test/hit_by_ray`（各 `_new` 版）。
-   地图三角网格已能解（§9.7），动态体（板/窗/门/角色胶囊）走 `add_object`。返回值字段语义要从调用处反推。库的选择待定（本机只有 numpy/scipy，pybullet 没装）。
+   - ✅ 几何内核 `colworld.py` + `load` 接线（2026-10-25）。**库选 numpy 自写**：pybullet 在 PyPI 上没有 Windows/py3.11 预编译包（要装 MSVC 现编），且 Python 接口没有凸体扫掠。以后要换后端只换 `colworld.py`。
+   - ⬜ 本机跑 `t_colworld.py`、`colcheck.py`（军工厂），地面命中率应与 §9.7 的 93.9% 同量级。
+   - ⬜ **适配层**：查询的参数含义与返回 6 元组各字段要从调用处反推，不能猜。素材两份：
+     `run1v4.py` 末尾打印的 `QUERY_SAMPLES`（运行期实参 + 调用位置）；`usage.py 'hit_by_ray_new\(' common_cs 6 10`（`sweep_test_new`/`static_test_new`/`sweep_intersect_new` 同）看结果怎么被用。
+     先做 `hit_by_ray_new`（向下射线落地，预计能解决 Y 每帧上升），再 `static_test`、`sweep_test`。
+   - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
 3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。
 
