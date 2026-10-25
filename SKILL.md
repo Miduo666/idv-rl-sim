@@ -621,6 +621,7 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 | `colworld.py` | ★ 碰撞内核（只依赖 numpy，2026-10-25）：静态网格 + 动态体(OBB→三角形) 上的 `raycast` / `capsule_overlap` / `capsule_sweep`(保守推进)，XZ 均匀网格 + 3D 包围盒预筛。合成 9 万三角形图上：竖直射线约 2500 次/秒、胶囊扫掠约 600 次/秒（本机实测待跑） |
 | `t_colworld.py` | colworld 自测：合成 `.scn_col`（含旋转物体）+ 与暴力解 / 密集采样对拍，不需要游戏资源 |
 | `t_colconst.py` | 打印碰撞适配要用的真实常量（`CollisionConst` 的过滤模式/Layer/Group/形状、`Filter`/`RoleFilter` 默认参数、`UNIT_TYPE_CONF` 编号名） |
+| `t_physx.py` | `physx_collision` 适配层自测（假 `CollisionConst` + 合成地图）：过滤语义、返回结构、动态体同步、三种形状、副本语义；39 项。把过滤模式故意弄反时 26 项失败 |
 | `colcheck.py` | 真实地图校验：`colcheck.py <zip> <scn_col> <nav> [半径] [抽样]` → 导航顶点下方地面命中率、沿导航边扫胶囊的被挡比例、吞吐 |
 | `natives/world.py` | `scene.get_model(name)` 按 `DM.pos_info[scene_id]`（每项 = 模型名, 位置, 16f 矩阵, …）返回带变换的模型；`register_scene_models` |
 | `natives/math3d.py` | 补 `vector.__abs__`(=长度)、向量比较(按长度，推断)、`rotation.slerp`、`rotation_to_matrix`；`matrix.rotation` 改为返回旋转部分矩阵(NeoX 语义)；修 `matrix_to_rotation` 迹≤0 分支 |
@@ -693,7 +694,11 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
    - **性能（2026-10-25）**：动态体接入后本机从 1.5 倍速掉到 1.0 倍速（每次查询 Python 遍历 143 个碰撞体 + 逐三角形建键/拷贝）。改为：
      碰撞体赋值 `position/rotation_matrix/size/type/enable` 时标脏、查询前只同步脏的（`position`/`rotation_matrix` 按副本存取，推断与原生一致）；过滤结果按过滤条件缓存；
      内核候选键改整数数组、动态体按忽略集合缓存掩码、射线先按物体包围盒 slab 剪枝、自写叉积。合成场景 143 个碰撞体下每次射线 1.96 → 0.71 ms；`t_colworld.py` 新增带动态体与忽略集合的对拍。
-   - ⬜ 胶囊 size 约定：看建角色 `ghost_col` 的调用处、`col_conf`、`CollisionManager.get_col_bottom_ofs/add_offset`（`air_power_extra_static_test` 把角色当成 `位置 ± col_conf[1]/2` 的线段 + 半径 `col_conf[0]`）。
+   - ✅ **胶囊已登记（2026-10-25）**：线段沿局部 Y（`rotation_matrix` 第 2 行），中心 = position，**线段半长 = size.y、半径 = size.x**。
+     依据：`CollisionManager._add_collision_role` 建角色胶囊 `col_object(CAPSULE, vector(col_conf[0], col_conf[1]/2, col_conf[0]), unit_type, layer)`，
+     再由 `_add_ghost_col_to_scene(unit, col, x, height, z, …)` 放到 `单位位置 + (x, col_height_offset, z)`；脚本手写的 `air_power_extra_static_test` 对同一胶囊按 `position ± col_conf[1]*0.5` + 半径 `col_conf[0]` 计算，两处一致。
+     `add_collision` 按 `unit_type` 查 `_unit_type_add_col_func_map` 分派，各种单位的碰撞体都在 `_add_collision_*` 里（尺寸多来自配表 `box_bounding` 的 `dataconf`/`offset`）。
+     未登记：`ORG_CAPSULE`（侦探）、`CYLINDER`（棺材等，`convex_gen`）、`MESH`。至此军工厂 1v4 用到的形状（盒子 138 + 胶囊 5）全部登记，本机 `UNSUPPORTED` 应为空。
    - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
 3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。

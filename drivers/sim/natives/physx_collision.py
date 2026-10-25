@@ -11,7 +11,7 @@
   static_test(col, group, layer, filter_type)                       static_test_new(col, group, ignore, extra, layer, filter_type)
 返回：射线/扫掠 = 6 元组 [命中, 命中点, 法线, ?, ?, 碰撞体]（[3][4] 调用处没见用过，填 None）；static/intersect = 碰撞体列表。
 ✅ 全部查询已接 ColWorld，过滤见 passes()；动态体在每次查询前按位置同步。查询体/动态体的 size 含义按形状逐个登记（SHAPE_QUERY），
-未登记的形状不参与（UNSUPPORTED 计数）—— 已登记球、盒子；胶囊待确认。盒子作查询体时支持重叠类查询，连续扫掠未实现。"""
+未登记的形状不参与（UNSUPPORTED 计数）—— 已登记球、盒子、胶囊（角色）。盒子作查询体时支持重叠类查询，连续扫掠未实现。"""
 import itertools, collections, os, sys, zipfile
 import simenv
 from math3d import vector, matrix
@@ -106,7 +106,10 @@ def passes(obj_group, obj_layer, obj_utype, group_value, ignore, extra, layer_va
 #           CollisionManager.get_col_bottom_ofs 对 type==0 返回 (0, -col_size.y, 0)（球底在中心下方一个半径）
 #   BOX：size = 半长，中心 = position，朝向 = rotation_matrix（行向量约定的旋转部分）。依据：迷宫墙 BOX (13.2, 15, 1.2) 摆在 pos+(0,15,0)、
 #        终点格 BOX (11,15,1) 在 +12.5、SuitcaseChecker BOX (12,15,12) 偏移 +17 —— 按半长算底面都落在地面附近（全长则悬空一半）
-#   CAPSULE：待确认（角色 ghost_col 由 col_conf=[半径, 高度] 建出来的那段代码还没看到）
+#   CAPSULE：线段沿局部 Y 轴（rotation_matrix 第 2 行），中心 = position，线段半长 = size.y，半径 = size.x。依据：
+#        CollisionManager._add_collision_role 建角色胶囊 col_object(CAPSULE, vector(col_conf[0], col_conf[1]/2, col_conf[0]))；
+#        脚本里手写的 air_power_extra_static_test 把同一个角色胶囊当成 "position ± col_conf[1]*0.5 的线段 + 半径 col_conf[0]"
+#   ORG_CAPSULE(7)（侦探用）、CYLINDER、MESH 等：未登记
 UNSUPPORTED = collections.Counter()
 
 
@@ -118,7 +121,14 @@ def _box(o, c):
     return ("box", c, tuple(o.size), _rot3(o))
 
 
-SHAPE_QUERY = {0: _sphere, 1: _box}              # 形状常量 -> fn(col, 中心 tuple) -> ("capsule", a, b, 半径) | ("box", 中心, 半长, 旋转)
+def _capsule(o, c):
+    hh = float(o.size.y)
+    R = _rot3(o)
+    up = R[1] if R else (0.0, 1.0, 0.0)
+    return ("capsule", tuple(c[j] - up[j] * hh for j in range(3)), tuple(c[j] + up[j] * hh for j in range(3)), float(o.size.x))
+
+
+SHAPE_QUERY = {0: _sphere, 1: _box, 2: _capsule}              # 形状常量 -> fn(col, 中心 tuple) -> ("capsule", a, b, 半径) | ("box", 中心, 半长, 旋转)
 
 
 def _rot3(o):
