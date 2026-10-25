@@ -162,5 +162,27 @@ check(h is not None and h.key == "pallet1" and abs(h.t - 6.5 / 40) < 1e-3, "胶�
 w.remove_dynamic("pallet1")
 check(w.raycast((0, 5, 0), (40, 5, 0)).key == ("s", 1), "移除后 → 打到墙")
 
+print("== 射线 + 动态体 + 忽略集合（与暴力解对拍）")
+w2 = ColWorld(cell=8.0)
+w2.add_static(colworld.box_tris((0, -1, 0), (60, 1, 60)), 0); w2.add_static(colworld.box_tris((20, 10, 0), (1, 10, 40)), 1); w2.build()
+keys = []
+for i in range(60):
+    q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+    k = "d%d" % i; keys.append(k)
+    if i % 3:
+        w2.add_box(k, rng.uniform(-50, 50, 3) * [1, 0.2, 1] + [0, 8, 0], rng.uniform(0.5, 4, 3), q)
+    else:
+        w2.add_dynamic(k, colworld.capsule_tris(rng.uniform(-50, 50, 3) * [1, 0, 1] + [0, 5, 0],
+                                                rng.uniform(-50, 50, 3) * [1, 0, 1] + [0, 15, 0], rng.uniform(1, 3)))
+bad = 0
+for n in range(1500):
+    p0 = rng.uniform((-60, -2, -60), (60, 25, 60)); p1 = p0 + rng.normal(0, 40, 3)
+    ign = frozenset(rng.choice(keys, size=rng.integers(0, 10), replace=False)) if n % 2 else frozenset()
+    h = w2.raycast(p0, p1, ignore=ign)
+    best = min([ray_tris(p0, p1 - p0, w2.st).min()] + [ray_tris(p0, p1 - p0, w2.dyn[k]).min() for k in keys if k not in ign])
+    if (h is None) != (not np.isfinite(best)) or (h is not None and abs(h.t - best) > 1e-9):
+        bad += 1
+check(bad == 0, "1500 条随机线段（60 个动态体、半数带忽略集合）与暴力解一致（不一致 %d）" % bad)
+
 print("\n%s" % ("全部通过" if not FAIL else "失败 %d 项" % len(FAIL)))
 sys.exit(1 if FAIL else 0)

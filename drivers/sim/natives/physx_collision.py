@@ -155,7 +155,13 @@ class _Base(object):
         return simenv.Stub("physx_collision.%s.%s" % (self._kind, n))
 
 
+_SHAPE_ATTRS = frozenset(("position", "rotation_matrix", "size", "col_size", "type", "enable"))
+_FILTER_ATTRS = frozenset(("group", "layer", "unit_type", "enable"))
+
+
 class col_object(_Base):
+    """position / rotation_matrix 按副本存取（取出来改不影响碰撞体，必须赋值回去——推断与原生一致，脚本里都是 `col.position = ...`）。
+    赋值形状/过滤相关属性时通知所在 scene_col，查询前只同步变过的碰撞体。"""
     _kind = "col_object"
 
     # 参数顺序已核对：CollisionManager.col_object 调 collision_so.col_object(obj_type, size, unit_type, UNIT_GROUP[unit_type], mass, use_model_when_fail, layer[, convex_gen])
@@ -169,6 +175,23 @@ class col_object(_Base):
         self.rotation_matrix = matrix()
         self.enable = True
         self.scene = None
+
+    def __setattr__(self, n, v):
+        object.__setattr__(self, n, v)
+        if n in _SHAPE_ATTRS or n in _FILTER_ATTRS:
+            sc = self.__dict__.get("scene")
+            if sc is not None:
+                sc._touch(self, n)
+
+    @property
+    def position(self): return vector(self._pos)
+    @position.setter
+    def position(self, v): object.__setattr__(self, "_pos", vector(v))
+
+    @property
+    def rotation_matrix(self): return matrix(self._rot)
+    @rotation_matrix.setter
+    def rotation_matrix(self, v): object.__setattr__(self, "_rot", matrix(v) if isinstance(v, matrix) else v)
 
     def force_update(self): pass
     def __bool__(self): return True
@@ -185,6 +208,8 @@ class scene_col(_Base):
         self.world = None
         self._static = None                      # 必须显式初始化：_Base.__getattr__ 对缺失属性返回桩
         self._dyn_state = {}                     # cid -> 上次放进 ColWorld 时的形状状态
+        self._dirty = set()                      # 形状/位置变过、下次查询前要同步的 cid
+        self._flt_cache = {}                     # 过滤条件 -> 不参与的动态体 cid 集合；过滤属性或成员变化时清空
 
     def __bool__(self): return True
     def add_to_world(self, *a): pass
@@ -216,9 +241,23 @@ class scene_col(_Base):
     def add_object(self, o, *a):
         self.objects[o.cid] = o
         o.scene = self
+        self._dirty.add(o.cid)
+        self._flt_cache.clear()
 
     def remove_object(self, o, *a):
-        self.objects.pop(getattr(o, "cid", None), None)
+        cid = getattr(o, "cid", None)
+        if self.objects.pop(cid, None) is None:
+            return
+        if o.__dict__.get("scene") is self:
+            o.__dict__["scene"] = None
+        self._dirty.add(cid)
+        self._flt_cache.clear()
+
+    def _touch(self, o, n):
+        if n in _SHAPE_ATTRS:
+            self._dirty.add(o.cid)
+        if n in _FILTER_ATTRS:
+            self._flt_cache.clear()
 
     def _q(self, name, ret, a, depth=3):
         QUERIES[name] += 1
@@ -236,27 +275,27 @@ class scene_col(_Base):
         return layer, filter_type
 
     def _sync(self, flt, self_cid=None):
-        """把 add_object 进来的碰撞体同步进 ColWorld（形状约定已确认的才放），返回本次查询要忽略的动态体键集合。"""
+        """把变过的碰撞体同步进 ColWorld（形状约定已确认的才放），返回本次查询要忽略的动态体键集合。"""
         w = self.world
-        ignore = set()
-        live = set()
-        for cid, o in self.objects.items():
-            if o is self._static:
-                continue
-            if cid == self_cid or not getattr(o, "enable", True) or not passes(o.group, o.layer, o.unit_type, *flt):
-                ignore.add(cid)
-            st = _shape_state(o)
+        for cid in self._dirty:
+            o = self.objects.get(cid)
+            st = _shape_state(o) if o is not None else None
             if st is None:
-                UNSUPPORTED["动态体 type=%s" % (o.type,)] += 1
-                continue
-            live.add(cid)
-            if self._dyn_state.get(cid) != st:
+                if o is not None:
+                    UNSUPPORTED["动态体 type=%s（次变更）" % (o.type,)] += 1
+                if self._dyn_state.pop(cid, None) is not None:
+                    w.remove_dynamic(cid)
+            elif self._dyn_state.get(cid) != st:
                 w.add_dynamic(cid, _shape_tris(o))
                 self._dyn_state[cid] = st
-        for cid in list(self._dyn_state):
-            if cid not in live:
-                w.remove_dynamic(cid)
-                del self._dyn_state[cid]
+        self._dirty.clear()
+        ignore = self._flt_cache.get(flt)
+        if ignore is None:
+            ignore = self._flt_cache[flt] = frozenset(
+                cid for cid, o in self.objects.items()
+                if not getattr(o, "enable", True) or not passes(o.group, o.layer, o.unit_type, *flt))
+        if self_cid is not None and self_cid in self._dyn_state and self_cid not in ignore:
+            ignore = ignore | {self_cid}
         return ignore
 
     def _obj(self, key):
@@ -272,7 +311,7 @@ class scene_col(_Base):
 
     def _prep(self, group, ignore, extra, layer, filter_type, self_cid=None):
         layer, filter_type = self._norm(layer, filter_type)
-        flt = (group, set(ignore or ()), set(extra or ()), layer, filter_type)
+        flt = (group, frozenset(ignore or ()), frozenset(extra or ()), layer, filter_type)
         return self._sync(flt, self_cid), passes(*_static_attrs(), *flt)
 
     # ---- 射线 ----

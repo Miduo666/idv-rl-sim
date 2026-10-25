@@ -34,7 +34,7 @@ class _Tris(object):
         self.T = T
         self.A, self.B, self.C = T[:, 0], T[:, 1], T[:, 2]
         self.E1, self.E2 = self.B - self.A, self.C - self.A
-        n = np.cross(self.E1, self.E2)
+        n = _cross(self.E1, self.E2)
         ln = np.linalg.norm(n, axis=1)
         self.ok = ln > 1e-12                      # 退化三角形：射线不测，距离只按边算
         self.N = n / np.where(self.ok, ln, 1.0)[:, None]
@@ -50,21 +50,59 @@ class _Tris(object):
         return s
 
 
+class _Keys(object):
+    """候选三角形的物体键：存成整数数组，只在需要时（命中/重叠）才换算成键，避免每次查询在 Python 里逐个建键。"""
+    __slots__ = ("arr", "fn")
+
+    def __init__(self, arr, fn):
+        self.arr, self.fn = arr, fn
+
+    def __getitem__(self, i):
+        return self.fn(self.arr[i])
+
+    def __len__(self):
+        return len(self.arr)
+
+    def sub(self, m):
+        return _Keys(self.arr[m], self.fn)
+
+
+def _static_key(v):
+    return ("s", int(v))
+
+
+def _cross(a, b):
+    """(n,3)/(3,) 叉积；比 np.cross 少很多调度开销（查询里一次要调几十次）。"""
+    a0, a1, a2 = a[..., 0], a[..., 1], a[..., 2]
+    b0, b1, b2 = b[..., 0], b[..., 1], b[..., 2]
+    return np.stack((a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0), axis=-1)
+
+
 # ---------------- 向量化几何（对一组三角形） ----------------
 
 def ray_tris(p0, d, tr):
     """线段 p0 + t·d (t∈[0,1]) 与每个三角形求交（Möller–Trumbore），不相交为 inf。"""
-    pv = np.cross(d, tr.E2)
+    pv = _cross(d, tr.E2)
     det = (tr.E1 * pv).sum(1)
     ok = tr.ok & (np.abs(det) > EPS)
     inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
     tv = p0 - tr.A
     u = (tv * pv).sum(1) * inv
-    qv = np.cross(tv, tr.E1)
+    qv = _cross(tv, tr.E1)
     v = (qv @ d) * inv
     t = (tr.E2 * qv).sum(1) * inv
     hit = ok & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1 + 1e-9) & (t >= 0) & (t <= 1)
     return np.where(hit, t, np.inf)
+
+
+def _seg_hits_boxes(p0, d, mn, mx, pad=1e-6):
+    """线段 p0 + t·d (t∈[0,1]) 是否穿过每个轴对齐包围盒（slab 法）。"""
+    dd = np.where(np.abs(d) < 1e-30, 1e-30, d)
+    t1 = (mn - pad - p0) / dd
+    t2 = (mx + pad - p0) / dd
+    tmin = np.minimum(t1, t2).max(1)
+    tmax = np.maximum(t1, t2).min(1)
+    return (tmax >= np.maximum(tmin, 0.0)) & (tmin <= 1.0)
 
 
 def _clip01(x):
@@ -106,9 +144,9 @@ def _pt_tris(P, tr):
     """点 P 到每个三角形的最近点 (n,3)：投影在三角形内取投影点，否则取三条边上最近者。"""
     dpl = ((P - tr.A) * tr.N).sum(1)
     Q = P - dpl[:, None] * tr.N
-    c0 = (np.cross(tr.B - tr.A, Q - tr.A) * tr.N).sum(1)
-    c1 = (np.cross(tr.C - tr.B, Q - tr.B) * tr.N).sum(1)
-    c2 = (np.cross(tr.A - tr.C, Q - tr.C) * tr.N).sum(1)
+    c0 = (_cross(tr.B - tr.A, Q - tr.A) * tr.N).sum(1)
+    c1 = (_cross(tr.C - tr.B, Q - tr.B) * tr.N).sum(1)
+    c2 = (_cross(tr.A - tr.C, Q - tr.C) * tr.N).sum(1)
     inside = tr.ok & (c0 >= 0) & (c1 >= 0) & (c2 >= 0)
     best = Q.copy()
     bd = np.full(len(tr), np.inf)
@@ -158,7 +196,7 @@ def box_tris_overlap(tr, center, half, rot=None):
     mn = np.minimum(np.minimum(V[0], V[1]), V[2])
     mx = np.maximum(np.maximum(V[0], V[1]), V[2])
     ok = np.all(mn <= h, axis=1) & np.all(mx >= -h, axis=1)
-    n = np.cross(V[1] - V[0], V[2] - V[0])
+    n = _cross(V[1] - V[0], V[2] - V[0])
     ok &= np.abs((n * V[0]).sum(1)) <= (np.abs(n) * h).sum(1) + 1e-9
     for e in (V[1] - V[0], V[2] - V[1], V[0] - V[2]):
         for k in range(3):
@@ -190,7 +228,7 @@ def capsule_tris(a, b, r, nseg=12, nring=3):
     L = np.linalg.norm(ax)
     u = ax / L if L > 1e-9 else np.array([0.0, 1.0, 0.0])
     t = np.array([1.0, 0.0, 0.0]) if abs(u[0]) < 0.9 else np.array([0.0, 0.0, 1.0])
-    e1 = np.cross(u, t); e1 /= np.linalg.norm(e1); e2 = np.cross(u, e1)
+    e1 = _cross(u, t); e1 /= np.linalg.norm(e1); e2 = _cross(u, e1)
     R = r / np.cos(np.pi / nseg) / np.cos(np.pi / (4 * nring))   # 外接修正（经线 / 纬线方向）
     ang = np.linspace(0, 2 * np.pi, nseg, endpoint=False)
     rings = []                                   # (中心, 半径倍数) 从 a 端极点到 b 端极点
@@ -223,7 +261,7 @@ class ColWorld(object):
         self.st = None             # 静态 _Tris
         self.st_obj = None         # 每个静态三角形所属的 scn_col 物体序号
         self.dyn = {}              # 键 -> _Tris
-        self._dyn_all = None       # (合并后的 _Tris, 每个三角形的键)；动态体变化时作废
+        self._dyn_all = None       # (合并后的 _Tris, 每个三角形所属动态体的序号数组, 序号→键, 键→序号)；动态体变化时作废
 
     # ---- 建立 ----
     def add_scn_col(self, data, mode="row"):
@@ -292,11 +330,26 @@ class ColWorld(object):
             keys = list(self.dyn)
             if keys:
                 tr = _Tris(np.concatenate([self.dyn[k].T for k in keys]))
-                owner = [k for k in keys for _ in range(len(self.dyn[k]))]
+                owner = np.repeat(np.arange(len(keys)), [len(self.dyn[k]) for k in keys])
             else:
-                tr, owner = _Tris(np.zeros((0, 3, 3))), []
-            self._dyn_all = (tr, owner)
+                tr, owner = _Tris(np.zeros((0, 3, 3))), np.zeros(0, dtype=np.int64)
+            self._dyn_all = (tr, owner, keys, {k: i for i, k in enumerate(keys)})
+            self._dyn_masks = {}
+            self._dyn_box = (np.array([self.dyn[k].mn.min(0) for k in keys]).reshape(-1, 3),
+                             np.array([self.dyn[k].mx.max(0) for k in keys]).reshape(-1, 3))
         return self._dyn_all
+
+    def _dyn_mask(self, ignore):
+        """动态三角形里参与查询的掩码（None = 全部参与），按忽略集合缓存。"""
+        if not ignore:
+            return None
+        tr, owner, keys, index = self._dyn_merged()
+        key = ignore if isinstance(ignore, frozenset) else frozenset(ignore)
+        m = self._dyn_masks.get(key)
+        if m is None:
+            drop = [index[k] for k in key if k in index]
+            m = self._dyn_masks[key] = (~np.isin(owner, drop)) if drop else None
+        return m
 
     # ---- 候选三角形 ----
     def _cells_rect(self, mn, mx):
@@ -346,19 +399,23 @@ class ColWorld(object):
         if not static:
             ks = ks[:0]
         st = self.st.sub(ks)
-        skeys = [("s", int(i)) for i in self.st_obj[ks]]
-        dtr, owner = self._dyn_merged()
-        if ignore and owner:
-            m = np.array([o not in ignore for o in owner])
-            dtr = dtr.sub(np.nonzero(m)[0]); owner = [o for o, keep in zip(owner, m) if keep]
-        return st, skeys, dtr, owner
+        skeys = _Keys(self.st_obj[ks], _static_key)
+        dtr, owner, keys, index = self._dyn_merged()
+        return st, skeys, dtr, _Keys(owner, keys.__getitem__), self._dyn_mask(ignore)
 
     # ---- 查询 ----
     def raycast(self, p0, p1, ignore=(), static=True):
         """线段 p0→p1 上最近的命中；法线朝向射线起点一侧（三角形绕序没有约定，见文件头）。"""
         p0 = np.asarray(p0, dtype=np.float64); p1 = np.asarray(p1, dtype=np.float64)
         d = p1 - p0
-        st, skeys, dtr, owner = self._candidates(self._tris_in(self._cells_segment(p0, p1)), ignore, static)
+        st, skeys, dtr, owner, dmask = self._candidates(self._tris_in(self._cells_segment(p0, p1)), ignore, static)
+        if len(dtr):                     # 先按物体包围盒做线段相交，只算可能穿过的动态体的三角形
+            hit_obj = _seg_hits_boxes(p0, d, *self._dyn_box)
+            sel = hit_obj[owner.arr]
+            if dmask is not None:
+                sel &= dmask
+            sel = np.nonzero(sel)[0]
+            dtr, owner = dtr.sub(sel), owner.sub(sel)
         best = None
         for tr, keys in ((st, skeys), (dtr, owner)):
             if not len(tr):
@@ -379,10 +436,13 @@ class ColWorld(object):
         ks = self._tris_in(self._cells_rect(lo[[0, 2]], hi[[0, 2]]))
         if len(ks):
             ks = ks[np.all((self.st.mx[ks] >= lo) & (self.st.mn[ks] <= hi), axis=1)]
-        st, skeys, dtr, owner = self._candidates(ks, ignore, static)
+        st, skeys, dtr, owner, dmask = self._candidates(ks, ignore, static)
         if len(dtr):
-            m = np.nonzero(np.all((dtr.mx >= lo) & (dtr.mn <= hi), axis=1))[0]
-            dtr = dtr.sub(m); owner = [owner[i] for i in m]
+            m = np.all((dtr.mx >= lo) & (dtr.mn <= hi), axis=1)
+            if dmask is not None:
+                m &= dmask
+            m = np.nonzero(m)[0]
+            dtr = dtr.sub(m); owner = owner.sub(m)
         return [(tr, keys) for tr, keys in ((st, skeys), (dtr, owner)) if len(tr)]
 
     def capsule_overlap(self, a, b, r, ignore=(), margin=0.0, static=True):
@@ -430,7 +490,7 @@ class ColWorld(object):
                 if prune is not None:          # 起点距离 > r + 位移长度的三角形整段都碰不到，后续迭代不再算
                     m = np.nonzero(dist <= prune)[0]
                     if len(m):
-                        kept.append((tr.sub(m), [keys[j] for j in m]))
+                        kept.append((tr.sub(m), keys.sub(m)))
             if prune is not None:
                 groups[:] = kept
             return best

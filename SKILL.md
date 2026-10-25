@@ -689,6 +689,10 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
      盒子作查询体：静态测试 / 零长度扫掠 / 路径相交走 `ColWorld.box_overlap`（分离轴，对拍 3000 例 0 误报 0 漏报）；盒子连续扫掠未实现（计数）。
    - 运行期统计（300 帧）：每次查询都有 **138 个盒子**（板/窗/门等）和 **5 个胶囊**（＝5 个角色的 ghost_col）—— 角色碰撞体是 `CAPSULE`。
    - **`col_conf = [半径, 高度]`**（`BaseUnit.init_collision` 读配表 `move_col`；大厅 NPC 写死 `(4.5, 8.0)`、`col_height_offset 8.0`；`reset_unit_collision` 里 `col_height_offset = 高度/4 + h_off`）。
+   - **角色胶囊在 `CollisionManager.add_collision(unit, model_scale)` 里建**（`BaseUnit.init_collision`/`reset_unit_collision` 只设 `col_conf` 后调它）；胶囊中心离地 `col_height_offset = OFFSET_HEIGHT + 高度/4`（有 `move_col_ofs` 时用其 `[1]`）。
+   - **性能（2026-10-25）**：动态体接入后本机从 1.5 倍速掉到 1.0 倍速（每次查询 Python 遍历 143 个碰撞体 + 逐三角形建键/拷贝）。改为：
+     碰撞体赋值 `position/rotation_matrix/size/type/enable` 时标脏、查询前只同步脏的（`position`/`rotation_matrix` 按副本存取，推断与原生一致）；过滤结果按过滤条件缓存；
+     内核候选键改整数数组、动态体按忽略集合缓存掩码、射线先按物体包围盒 slab 剪枝、自写叉积。合成场景 143 个碰撞体下每次射线 1.96 → 0.71 ms；`t_colworld.py` 新增带动态体与忽略集合的对拍。
    - ⬜ 胶囊 size 约定：看建角色 `ghost_col` 的调用处、`col_conf`、`CollisionManager.get_col_bottom_ofs/add_offset`（`air_power_extra_static_test` 把角色当成 `位置 ± col_conf[1]/2` 的线段 + 半径 `col_conf[0]`）。
    - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
