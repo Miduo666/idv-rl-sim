@@ -11,7 +11,7 @@
   static_test(col, group, layer, filter_type)                       static_test_new(col, group, ignore, extra, layer, filter_type)
 返回：射线/扫掠 = 6 元组 [命中, 命中点, 法线, ?, ?, 碰撞体]（[3][4] 调用处没见用过，填 None）；static/intersect = 碰撞体列表。
 ✅ 全部查询已接 ColWorld，过滤见 passes()；动态体在每次查询前按位置同步。查询体/动态体的 size 含义按形状逐个登记（SHAPE_QUERY），
-未登记的形状不参与（UNSUPPORTED 计数）—— 目前只有球确认了。"""
+未登记的形状不参与（UNSUPPORTED 计数）—— 已登记球、盒子；胶囊待确认。盒子作查询体时支持重叠类查询，连续扫掠未实现。"""
 import itertools, collections, os, sys, zipfile
 import simenv
 from math3d import vector, matrix
@@ -102,17 +102,23 @@ def passes(obj_group, obj_layer, obj_utype, group_value, ignore, extra, layer_va
 # ---- 碰撞体形状 ----
 # 形状常量 CollisionConst：SPHERE 0 / BOX 1 / CAPSULE 2 / CYLINDER 3 / MESH 4 / ORG_CAPSULE 7 / CONVEX_CYLINDER 8。
 # size 的含义逐个形状确认后才登记；未登记的形状：作为查询体时查询一律未命中，作为动态体时不放进世界（都计入 UNSUPPORTED）。
-#   SPHERE：半径 = size.x（BaseBullet.build_collision 等都传 vector(radius, radius, radius)）
-#   BOX / CAPSULE：待确认（看建角色 ghost_col 与 col_conf 的调用处）
+#   SPHERE：半径 = size.y（= x = z）。BaseBullet.build_collision 等都传 vector(radius, radius, radius)；
+#           CollisionManager.get_col_bottom_ofs 对 type==0 返回 (0, -col_size.y, 0)（球底在中心下方一个半径）
+#   BOX：size = 半长，中心 = position，朝向 = rotation_matrix（行向量约定的旋转部分）。依据：迷宫墙 BOX (13.2, 15, 1.2) 摆在 pos+(0,15,0)、
+#        终点格 BOX (11,15,1) 在 +12.5、SuitcaseChecker BOX (12,15,12) 偏移 +17 —— 按半长算底面都落在地面附近（全长则悬空一半）
+#   CAPSULE：待确认（角色 ghost_col 由 col_conf=[半径, 高度] 建出来的那段代码还没看到）
 UNSUPPORTED = collections.Counter()
 
 
 def _sphere(o, c):
-    return (c, c, float(o.size.x))
+    return ("capsule", c, c, float(o.size.y))
 
 
-SHAPE_QUERY = {0: _sphere}                       # 形状常量 -> fn(col, 中心 tuple) -> (线段端点 a, 端点 b, 半径)
-SHAPE_TRIS = {}                                  # 形状常量 -> fn(col) -> 三角形（不在表里的走 SHAPE_QUERY 转胶囊多面体）
+def _box(o, c):
+    return ("box", c, tuple(o.size), _rot3(o))
+
+
+SHAPE_QUERY = {0: _sphere, 1: _box}              # 形状常量 -> fn(col, 中心 tuple) -> ("capsule", a, b, 半径) | ("box", 中心, 半长, 旋转)
 
 
 def _rot3(o):
@@ -121,7 +127,7 @@ def _rot3(o):
 
 
 def _shape_state(o):
-    if o.type not in SHAPE_QUERY and o.type not in SHAPE_TRIS:
+    if o.type not in SHAPE_QUERY:
         return None
     return (o.type, tuple(o.size), tuple(o.position), _rot3(o))
 
@@ -133,10 +139,10 @@ def _query_shape(o, center):
 
 def _shape_tris(o):
     import colworld
-    if o.type in SHAPE_TRIS:
-        return SHAPE_TRIS[o.type](o)
-    a, b, r = _query_shape(o, o.position)
-    return colworld.capsule_tris(a, b, r)
+    g = _query_shape(o, o.position)
+    if g[0] == "box":
+        return colworld.box_tris(g[1], g[2], g[3])
+    return colworld.capsule_tris(g[1], g[2], g[3])
 
 
 class _Base(object):
@@ -157,6 +163,7 @@ class col_object(_Base):
         self.cid = next(_cid)
         self.type = obj_type
         self.size = vector(size) if size is not None else vector(1, 1, 1)
+        self.col_size = self.size                # get_col_bottom_ofs 读 col.col_size（hasattr 判断），与构造尺寸同义（推断）
         self.unit_type, self.group, self.mass, self.layer = unit_type, group, mass, layer
         self.position = vector()
         self.rotation_matrix = matrix()
@@ -302,15 +309,18 @@ class scene_col(_Base):
         if g is None:
             return list(NO_HIT)
         dyn_ignore, use_static = self._prep(group, ignore, extra, layer, filter_type, col.cid)
-        p0, p1, r = g
         delta = (e.x - s.x, e.y - s.y, e.z - s.z)
         if delta == (0.0, 0.0, 0.0):
             # 起点=终点：check_in_collision_static_ex_sweep_test 把 [-1] 当碰撞体列表遍历、未命中判 None（其余槽位无用例，填 None）
-            hits = self.world.capsule_overlap(p0, p1, r, ignore=dyn_ignore, static=use_static)
-            if not hits:
+            keys = self._overlap(g, dyn_ignore, use_static)
+            if not keys:
                 return list(NO_HIT)
             QUERY_HITS[name] += 1
-            return [True, None, None, None, None, [self._obj(k) for k, _ in hits]]
+            return [True, None, None, None, None, [self._obj(k) for k in keys]]
+        if g[0] != "capsule":
+            UNSUPPORTED["%s 盒子扫掠" % name] += 1   # 盒子的连续扫掠还没实现
+            return list(NO_HIT)
+        _, p0, p1, r = g
         h = self.world.capsule_sweep(p0, p1, r, delta, ignore=dyn_ignore, static=use_static)
         if h is None:
             return list(NO_HIT)
@@ -334,10 +344,18 @@ class scene_col(_Base):
         if g is None:
             return []
         dyn_ignore, use_static = self._prep(group, ignore, extra, layer, filter_type, col.cid)
-        hits = self.world.capsule_overlap(*g, ignore=dyn_ignore, static=use_static)
-        if hits:
+        keys = self._overlap(g, dyn_ignore, use_static)
+        if keys:
             QUERY_HITS[name] += 1
-        return [self._obj(k) for k, _ in hits]
+        return [self._obj(k) for k in keys]
+
+    def _overlap(self, g, dyn_ignore, use_static, off=(0.0, 0.0, 0.0)):
+        if g[0] == "box":
+            c = tuple(g[1][j] + off[j] for j in range(3))
+            return self.world.box_overlap(c, g[2], g[3], ignore=dyn_ignore, static=use_static)
+        _, p0, p1, r = g
+        return [k for k, _ in self.world.capsule_overlap([p0[j] + off[j] for j in range(3)], [p1[j] + off[j] for j in range(3)], r,
+                                                         ignore=dyn_ignore, static=use_static)]
 
     def static_test(self, col, group=0, layer=None, filter_type=None, *a):
         return self._static_test("static_test", (col, group, layer, filter_type) + a, col, group, (), (), layer, filter_type)
@@ -355,16 +373,14 @@ class scene_col(_Base):
         if g is None:
             return []
         dyn_ignore, use_static = self._prep(group, ignore, extra, layer, filter_type, col.cid)
-        p0, p1, r = g
         d = (e.x - s.x, e.y - s.y, e.z - s.z)
         L = (d[0] ** 2 + d[1] ** 2 + d[2] ** 2) ** 0.5
-        n = max(1, int(L / max(r * 0.5, 1e-3)))
+        step = min(g[2]) * 0.5 if g[0] == "box" else g[3] * 0.5
+        n = max(1, int(L / max(step, 1e-3)))
         seen = {}
         for i in range(n + 1):
             t = i / n
-            off = (d[0] * t, d[1] * t, d[2] * t)
-            for k, _ in self.world.capsule_overlap([p0[j] + off[j] for j in range(3)], [p1[j] + off[j] for j in range(3)], r,
-                                                   ignore=dyn_ignore, static=use_static):
+            for k in self._overlap(g, dyn_ignore, use_static, (d[0] * t, d[1] * t, d[2] * t)):
                 seen.setdefault(k, None)
         if seen:
             QUERY_HITS[name] += 1

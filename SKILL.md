@@ -684,7 +684,12 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
      零长度扫掠返回碰撞体列表；`sweep_intersect` 用沿路径分步重叠近似；起点已重叠时按 t=0 命中返回（无依据，单独计数）。
      **但 size 的含义按形状逐个登记，目前只登记了球（半径=size.x，依据 `vector(radius,radius,radius)`）**；盒子/胶囊未登记 → 作查询体时未命中、作动态体时不放进世界，都计入 `UNSUPPORTED`（`report` 打印）。
      盒子的旁证：`SuitcaseChecker` 用 `BOX vector(12,15,12)` + 偏移 `(0,17,0)`，若是半长则覆盖 y 2–32，正好是 walkable 高 30——倾向半长，未确认。
-   - ⬜ 胶囊/盒子 size 约定：看建角色 `ghost_col` 的调用处、`col_conf`、`CollisionManager.get_col_bottom_ofs/add_offset`（`air_power_extra_static_test` 把角色当成 `位置 ± col_conf[1]/2` 的线段 + 半径 `col_conf[0]`）。
+   - ✅ **盒子已登记（2026-10-25）**：size = 半长、中心 = position、朝向 = rotation_matrix。依据：迷宫墙 `BOX (13.2,15,1.2)` 摆在 `pos+(0,15,0)`、终点格 `(11,15,1)` 在 `+12.5`、`SuitcaseChecker (12,15,12)` 偏移 `+17`，按半长算底面都贴地。
+     球的半径约定由 `get_col_bottom_ofs`（type==0 → `(0,-col_size.y,0)`）坐实；原生碰撞体有 `col_size` 属性，桩已补。
+     盒子作查询体：静态测试 / 零长度扫掠 / 路径相交走 `ColWorld.box_overlap`（分离轴，对拍 3000 例 0 误报 0 漏报）；盒子连续扫掠未实现（计数）。
+   - 运行期统计（300 帧）：每次查询都有 **138 个盒子**（板/窗/门等）和 **5 个胶囊**（＝5 个角色的 ghost_col）—— 角色碰撞体是 `CAPSULE`。
+   - **`col_conf = [半径, 高度]`**（`BaseUnit.init_collision` 读配表 `move_col`；大厅 NPC 写死 `(4.5, 8.0)`、`col_height_offset 8.0`；`reset_unit_collision` 里 `col_height_offset = 高度/4 + h_off`）。
+   - ⬜ 胶囊 size 约定：看建角色 `ghost_col` 的调用处、`col_conf`、`CollisionManager.get_col_bottom_ofs/add_offset`（`air_power_extra_static_test` 把角色当成 `位置 ± col_conf[1]/2` 的线段 + 半径 `col_conf[0]`）。
    - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
 3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。

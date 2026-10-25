@@ -148,6 +148,29 @@ def seg_tris(a, b, tr):
     return bd, PS, PT
 
 
+def box_tris_overlap(tr, center, half, rot=None):
+    """有向包围盒与每个三角形是否相交（分离轴：盒子 3 轴 + 三角形法线 + 9 个叉积轴）。rot 行向量约定（世界 = 局部·rot + center）。"""
+    R = np.eye(3) if rot is None else np.asarray(rot, dtype=np.float64)
+    inv = np.linalg.inv(R)
+    c = np.asarray(center, dtype=np.float64)
+    h = np.asarray(half, dtype=np.float64)
+    V = [(P - c) @ inv for P in (tr.A, tr.B, tr.C)]
+    mn = np.minimum(np.minimum(V[0], V[1]), V[2])
+    mx = np.maximum(np.maximum(V[0], V[1]), V[2])
+    ok = np.all(mn <= h, axis=1) & np.all(mx >= -h, axis=1)
+    n = np.cross(V[1] - V[0], V[2] - V[0])
+    ok &= np.abs((n * V[0]).sum(1)) <= (np.abs(n) * h).sum(1) + 1e-9
+    for e in (V[1] - V[0], V[2] - V[1], V[0] - V[2]):
+        for k in range(3):
+            ax = np.zeros_like(e)
+            ax[:, (k + 1) % 3] = -e[:, (k + 2) % 3]      # 单位轴 k × e
+            ax[:, (k + 2) % 3] = e[:, (k + 1) % 3]
+            p = [(Vi * ax).sum(1) for Vi in V]
+            r = (np.abs(ax) * h).sum(1)
+            ok &= ~((np.minimum(np.minimum(p[0], p[1]), p[2]) > r + 1e-9) | (np.maximum(np.maximum(p[0], p[1]), p[2]) < -r - 1e-9))
+    return ok
+
+
 def box_tris(center, half, rot=None):
     """有向包围盒 → 12 个三角形。rot: 3×3，行向量约定（局部点 v → v·rot + center）。"""
     hx, hy, hz = half
@@ -373,6 +396,16 @@ class ColWorld(object):
                 k = keys[i]
                 res[k] = min(res.get(k, np.inf), float(dist[i]) - r)
         return sorted(res.items(), key=lambda kv: kv[1])
+
+    def box_overlap(self, center, half, rot=None, ignore=(), static=True):
+        """与有向包围盒相交的物体键列表（按首次出现顺序）。"""
+        corners = box_tris(center, half, rot).reshape(-1, 3)
+        res = []
+        for tr, keys in self._box_query(corners.min(0), corners.max(0), ignore, static):
+            for i in np.nonzero(box_tris_overlap(tr, center, half, rot))[0]:
+                if keys[i] not in res:
+                    res.append(keys[i])
+        return res
 
     def capsule_sweep(self, a, b, r, delta, ignore=(), skin=1e-3, max_iter=64, static=True):
         """胶囊平移 delta 的首次接触（保守推进：每步按当前最近距离前进，平移下距离的减小速度不超过 |delta|）。
