@@ -19,7 +19,7 @@ VISUAL = [("core.FogManager", "FogManager"), ("core.CorrManager", "CorrManager")
 
 
 class SimCore(object):
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=True, server_ai=False):
         self.verbose = verbose
         self.GK = GK = simboot.boot(verbose)
         import game3d, math3d, simpatch
@@ -48,6 +48,7 @@ class SimCore(object):
         self.started = False
         self.tick_errors = collections.Counter()
         self.on_start = []          # 开局回调：fn(world)
+        self.server_ai = install_server_ai_island(self._log) if server_ai else None
 
     def _log(self, s):
         if self.verbose: print(s)
@@ -129,6 +130,61 @@ class SimCore(object):
             for where, args in samples:
                 print("      %s  %r" % (where, args))
         simenv.report(top)
+
+
+class _ServerModeDevConfig(object):
+    """给 AI 模块用的 dev_config：只把 SERVER_MODE 换成 True，其余属性实时转发给真 dev_config（不做快照，免得之后改的值看不到）。"""
+    def __init__(self, real):
+        object.__setattr__(self, "_real", real)
+
+    def __getattr__(self, n):
+        return True if n == "SERVER_MODE" else getattr(self._real, n)
+
+    def __setattr__(self, n, v):
+        setattr(self._real, n, v)
+
+
+def install_server_ai_island(log=print):
+    """服务端模式 AI 孤岛（SKILL §9.9）：人机 AI 的完整逻辑只在 SERVER_MODE 下开启，且 AI 模块都是调用时读 dev_config.SERVER_MODE。
+    做法同 exp_servermode.py：servercommon.Netease 指向 GK → 清掉已加载的 common_cs.ai.* → SERVER_MODE=True 下全量重导入（bt_code 除外）
+    → 恢复 False → 给这些模块换成 SERVER_MODE 恒为 True 的 dev_config 代理。必须在导入 worlds.WorldBattleClientBase（带进旧 AICommonTrigger）之前做。
+    不填任何服务端专有成员的占位值；缺什么由运行期报错暴露，逐条按调用处推断后补进 sim1v4.ServerRoomShim。"""
+    import types, game_kernel
+    from etc import dev_config
+    stale = [m for m in ("worlds.WorldBattleClientBase", "worlds.WorldBattleBase") if m in sys.modules]
+    sc = types.ModuleType("servercommon"); sc.Netease = game_kernel; sc.__path__ = []
+    simenv.REAL["servercommon"] = sc
+    for m in [m for m in sys.modules if m == "common_cs.ai" or m.startswith("common_cs.ai.")]:
+        del sys.modules[m]
+    root = os.path.join(simenv.ROOT, "common_cs", "ai")
+    ok, bad = 0, collections.Counter()
+    dev_config.SERVER_MODE = True
+    try:
+        for dp, dn, fn in os.walk(root):
+            if "bt_code" in dp:
+                continue
+            for f in sorted(fn):
+                if not f.endswith(".pyc"):
+                    continue
+                rel = os.path.relpath(os.path.join(dp, f), simenv.ROOT)[:-4].replace(os.sep, ".")
+                if rel.endswith(".__init__"):
+                    rel = rel[:-9]
+                try:
+                    importlib.import_module(rel); ok += 1
+                except Exception as e:
+                    bad["%s: %s" % (type(e).__name__, str(e)[:100])] += 1
+    finally:
+        dev_config.SERVER_MODE = False
+    proxy = _ServerModeDevConfig(dev_config)
+    proxied = 0
+    for name, m in list(sys.modules.items()):
+        if (name == "common_cs.ai" or name.startswith("common_cs.ai.")) and getattr(m, "dev_config", None) is dev_config:
+            m.dev_config = proxy; proxied += 1
+    info = {"imported": ok, "failed": dict(bad), "proxied": proxied, "stale": stale}
+    log("[core] 服务端 AI 孤岛：导入 %d 个模块，失败 %d（%s），装代理 %d 个%s" % (
+        ok, sum(bad.values()), "; ".join("%s ×%d" % kv for kv in bad.most_common(3)) or "无", proxied,
+        "；⚠ 已提前加载 %s，其中引用的仍是旧 AI 类" % stale if stale else ""))
+    return info
 
 
 def _make_world_mgr():

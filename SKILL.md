@@ -701,6 +701,10 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
      未登记：`ORG_CAPSULE`（侦探）、`CYLINDER`（棺材等，`convex_gen`）、`MESH`。至此军工厂 1v4 用到的形状（盒子 138 + 胶囊 5）全部登记，本机 `UNSUPPORTED` 应为空。
    - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
+   - ✅ 机制已入 `simcore.install_server_ai_island`（2026-10-25），`SimCore(server_ai=True)` / `run1v4.py … --server-ai` 打开，默认关。
+     与 `exp_servermode.py` 同法，区别：dev_config 代理改成实时转发（不做快照）；**不带实验里的占位值**（修机角度 `[0,1,2,3]`、`punish_start_timestamp=0`、手动塞 `MathUtils`）。
+     若 `worlds.WorldBattleClientBase` 已提前加载会打印警告（其引用的是旧 AI 类）。假 std_pyc 树上验证：导入期/调用期都见 SERVER_MODE=True、`Netease`→GK、`bt_code` 跳过、失败只计数。
+   - ⬜ 本机 `--server-ai` 跑出的缺口逐条查：`punish_start_timestamp`（`QAAIButcher.get_in_butcher_sight_or_chase_civis`）、`GeneratorUnit.ai_fix_angle/ai_fix_pos`（`AICommonTrigger._init_gen_fixdir`）、`room.skada_mgr` 等。
 3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。
 
 ---

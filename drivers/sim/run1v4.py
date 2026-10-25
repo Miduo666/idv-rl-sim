@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""跑一局 1v4 模拟对局并打印角色轨迹/行为树状态/卡点。用法: run1v4.py [scene_id] [帧数]"""
+"""跑一局 1v4 模拟对局并打印角色轨迹/行为树状态/卡点。用法: run1v4.py [scene_id] [帧数] [--server-ai]
+--server-ai：开服务端模式 AI 孤岛（SimCore.install_server_ai_island），人机 AI 走服务端完整逻辑。"""
 import sys, os, traceback, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from simcore import SimCore
 
-SCENE_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-FRAMES = int(sys.argv[2]) if len(sys.argv) > 2 else 300
+SERVER_AI = "--server-ai" in sys.argv
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+SCENE_ID = int(ARGS[0]) if len(ARGS) > 0 else 1
+FRAMES = int(ARGS[1]) if len(ARGS) > 1 else 300
 
-core = SimCore()
+core = SimCore(server_ai=SERVER_AI)
 import sim1v4
 from common_cs.ai import BehaviorTree as BT
 
