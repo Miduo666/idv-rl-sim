@@ -1,18 +1,40 @@
 # -*- coding: utf-8 -*-
 """在真实地图上校验 colworld：建网格耗时、导航顶点下方的地面命中率（应与 validate_col_nav 的 93.9/96.3/97.6% 同量级）、
 沿导航多边形边的胶囊扫掠被挡比例、查询吞吐。
-用法: colcheck.py <res_recovered.zip> <scn_col路径> <nav路径> [胶囊半径=3] [抽样数=2000]
-例:   colcheck.py ..\\..\\res_pull\\resdump_1025_015456\\res_recovered.zip scene/scene_battle/ordnance_factory1/nav/ordnance_factory1.scn_col <军工厂 server_nav>"""
+用法: colcheck.py <res_recovered.zip> <scn_col路径> [nav路径|auto] [胶囊半径=3] [抽样数=2000]
+      nav 路径省略或写 auto：在 zip 里找与 scn_col 同目录的 .nav（有多个就全列出来，用第一个）
+例:   colcheck.py ..\\..\\res_pull\\resdump_1025_015456\\res_recovered.zip scene/scene_battle/ordnance_factory1/nav/ordnance_factory1.scn_col"""
 import sys, os, time, zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import colworld, navmesh
 
-zp, col_path, nav_path = sys.argv[1:4]
+zp, col_path = sys.argv[1:3]
+nav_path = sys.argv[3] if len(sys.argv) > 3 else "auto"
 R = float(sys.argv[4]) if len(sys.argv) > 4 else 3.0
 NS = int(sys.argv[5]) if len(sys.argv) > 5 else 2000
 rng = np.random.default_rng(0)
 z = zipfile.ZipFile(zp)
+names = {n.replace("\\", "/").lower(): n for n in z.namelist()}
+
+
+def resolve(p):
+    n = names.get(p.replace("\\", "/").lower().lstrip("/"))
+    if n is None:
+        sys.exit("zip 里没有 %s" % p)
+    return n
+
+
+col_path = resolve(col_path)
+if nav_path == "auto":
+    d = col_path.replace("\\", "/").lower().rsplit("/", 1)[0] + "/"
+    cands = sorted(n for k, n in names.items() if k.endswith(".nav") and k.startswith(d) and "/" not in k[len(d):])
+    if not cands:
+        sys.exit("%s 下没有 .nav；zip 里全部 .nav：\n  " % d + "\n  ".join(sorted(n for k, n in names.items() if k.endswith(".nav"))))
+    print("同目录的 .nav：", cands, "→ 用", cands[0])
+    nav_path = cands[0]
+else:
+    nav_path = resolve(nav_path)
 
 t0 = time.perf_counter()
 w = colworld.ColWorld()
