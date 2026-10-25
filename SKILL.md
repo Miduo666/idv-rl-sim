@@ -720,7 +720,9 @@ col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, 
 - 打开：`SimCore(server_ai=True)` / `run1v4.py … --server-ai`（默认关）。做法同 `exp_servermode.py`：`servercommon.Netease`→GK → 清掉 `common_cs.ai.*` → `SERVER_MODE=True` 下全量重导入（跳过 `bt_code`）→ 恢复 False →
   给 AI 模块换 `SERVER_MODE` 恒为 True、其余属性**实时转发**的 dev_config 代理。`worlds.WorldBattleClientBase` 若已提前加载会打印警告（本机实测没有）。**不带实验里的占位值。**
 - 本机实测：导入 178 个、失败 1（`game_kernel` 没有 `LM`）、装代理 37 个；求生者 `MathUtils` 异常消失；1.8 倍速。新增打桩模块：`battle`、`battle.units.RegionAttackManager`、`entity`、`config`、`utils`、`Timer`、`LogConf`、`mobilelog`（服务端专用导入）。
-- **`punish_start_timestamp` 已补**（`sim1v4.WorldSim1v4._init_units`，求生者）：全部脚本只有 `QAAIButcher.get_in_butcher_sight_or_chase_civis` 一处读，判 `> 0`（处罚已开始），开局未受处罚 → 取 0（任何 ≤0 等价）。**待本机复跑确认**。
+- **`punish_start_timestamp` 已补**（`sim1v4.WorldSim1v4._init_units`，求生者）：全部脚本只有 `QAAIButcher.get_in_butcher_sight_or_chase_civis` 一处读，判 `> 0`（处罚已开始），开局未受处罚 → 取 0（任何 ≤0 等价）。**本机 2026-10-26 复跑确认**：该异常消失。
+- 同次复跑（`run1v4.py 1 300 --server-ai`，1.2 倍速）剩两处异常：密码机 `ai_fix_angle`（9.6.3-1，每帧中断 `game_tick`）；
+  监管行为树 `GlobalCarryScoreCal.cal_situation_score` 的 `fear` 为 None（`carry_tar_select` 传入的求生者恐惧值，服务端单位成员，见 §9.9 清单），每帧中断监管决策。角色仍原地不动。
 
 #### 9.6.3 缺口清单（按阻塞程度）
 1. **`GeneratorUnit.ai_fix_angle` / `ai_fix_pos`**（硬阻塞：`AICommonTrigger._init_gen_fixdir` 每帧抛 → `game_tick` 中断）。已知：
