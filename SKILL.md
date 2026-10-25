@@ -655,6 +655,13 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
    - ⬜ **适配层**：查询的参数含义与返回 6 元组各字段要从调用处反推，不能猜。素材两份：
      `run1v4.py` 末尾打印的 `QUERY_SAMPLES`（运行期实参 + 调用位置）；`usage.py 'hit_by_ray_new\(' common_cs 6 10`（`sweep_test_new`/`static_test_new`/`sweep_intersect_new` 同）看结果怎么被用。
      先做 `hit_by_ray_new`（向下射线落地，预计能解决 Y 每帧上升），再 `static_test`、`sweep_test`。
+   - **调用处反推结果（2026-10-25，`usage.py`，这些是 `collision_mgr`(CollisionManager) 层的用法，原生层怎么被它包装还要看 CollisionManager 本身）**：
+     - `hit_by_ray_new(start, end, filter_obj | filter_rule=CollisionConst.RoleFilter(...))`：调用处**只用 `res[0]`**（是否被挡）。用途全是视线/遮挡判断（手电筒、杰克隔墙技能、求生者判断监管与机之间有无遮挡）。
+     - `sweep_test_new(col_obj, start, end, filter_rule)`：`res[0]` 是否命中、`res[1]` 命中点(vector，`hit_pos + push_dir*半径` 再回写位置)、`res[2]` 法线、`res[5]`/`res[-1]` 命中的碰撞体（有 `.cid`，`collision_mgr.get_unit(cid)` 取单位）；`res[3]`、`res[4]` 调用处还没见到用法。用户：`MotionSimulation.tick_pos`、`RootMotion(Classic)Component._check_col_in_root_motion`（根运动移动）。
+     - `static_test_new(col_obj, filter_rule)`：返回碰到的碰撞体列表（元素有 `.group`、`.cid`），空为 `[]` 或 `None`（`InteractiveComponent` 判 `is None`）。用户：`TpsMoveComponent.calculate_walk_next_position`（走路）、`InteractiveComponent.update_interested_units`（交互范围）、AI 的 `verify_model`/`judge_valid`。
+     - 运行期计数：军工厂 300 帧里 `hit_by_ray_new` 2880 次（每帧约 10 次），其余查询 0 次——因为单位都没在走（见下）。
+   - **同一次运行里 5 个角色全程原地不动、Y 恒定**（不再是"Y 每帧上升"）。挡住移动的是行为树每步都抛的服务端专有成员异常，不是碰撞：
+     监管 `punish_start_timestamp`（求生者缺）、求生者 `NameError: MathUtils`（客户端模式不导入）、`AICommonTrigger._init_gen_fixdir` 缺 `GeneratorUnit.ai_fix_angle`——正是第 2 步"AI 孤岛"的清单。
    - ⬜ 动态体：`add_object(col_object)` → `ColWorld.add_box`；`size` 是半长还是全长、`type` 各值对应什么形状，同样要从建碰撞体的调用处确认。
 2. **服务端模式 AI 孤岛**正式进 `simcore`，然后按报错逐个重建服务端接口（每条记推断依据，进 `ServerRoomShim`）。
 3. 外部控制接口（RL 的动作/观测），在 AI 能正常打完一局之后再做。
