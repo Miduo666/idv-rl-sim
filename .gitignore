@@ -12,3 +12,7 @@ __pycache__/
 # 第三方源码（构建脚本按固定版本拉取）与编译产物
 tools/_deps/
 drivers/sim/natives/bin/
+
+# pseudo.py 导出的游戏代码笔记（游戏代码衍生物，不入库）
+drivers/sim/*.txt
+!drivers/sim/opcode_names.txt
