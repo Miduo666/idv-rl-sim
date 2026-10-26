@@ -57,6 +57,10 @@ class SimCore(object):
     def make_world(self, world_cls, scene_id, self_pid, world_type=None, **info):
         GK = self.GK
         w = world_cls()
+        # 真机 WorldManager.change_to_world：cls() → world.init() → set_current_world → set_info → (异步) init_scene。
+        # init() 按 world_type 置 is_battle_client/is_battle_server 等标志并调 unit_mgr.init()/event_mgr.init()；
+        # 漏调时 is_battle_client=False（本地服务端判断失效）、UnitManager.move_relate_unit_getter 不存在
+        w.init()
         # 开局环绕镜头(start_init_view)靠相机每帧推进到时长后回调开战；模拟器不跑相机，用游戏自带的 skip_opening 直接回调。
         # 不跳过则相机停在 ROTATE_Y_MODE，WorldBattleBase.game_tick 在 unit_mgr.tick 之前就 return
         w.skip_opening = True
@@ -66,6 +70,7 @@ class SimCore(object):
         info_dict = dict(scene_id=scene_id, guuid="sim%04d" % scene_id, world_type=world_type, player_id=self_pid, **info)
         w.set_info({"info_dict": info_dict, "scene_id": scene_id, "world_type": world_type})
         w.init_scene(dict(info_dict))
+        GK.unit_mgr = w.unit_mgr      # 真机由 WorldManager 切换世界时赋值（change_world_extra_load_battle: GK.unit_mgr = cur_world.unit_mgr）
         self.world = w
         return w
 
@@ -88,13 +93,18 @@ class SimCore(object):
         self.GK.g_world_mgr.now = _t.time()
         if not self.started and getattr(getattr(w, "tick", None), "__name__", "") == "game_tick":
             self._on_game_start(w)
-        try:
-            w.tick()
-        except Exception:
-            key = traceback.format_exc().strip().splitlines()[-1]
-            if not self.tick_errors[key] and self.verbose:
-                print("[tick 异常 @帧%d] %s" % (self.game3d.frame_id(), "".join(traceback.format_exc(limit=-6).splitlines(True)[-14:])))
-            self.tick_errors[key] += 1
+        # 按 WorldManager.release_logic 的顺序：cur_world.tick() → … → GK.unit_mgr.move_relate_handle() → cur_world.tick_unit_del_logic()
+        # move_relate_handle 每帧把 move_flag 复位（MoveUnit.tick 第一句 `if self.move_flag: return`，不复位则"自己"(监管)只推进一帧）。
+        # 其间的 UI/声音/网络/相机步骤不跑；GK.g_event_dispatcher 保持桩（战斗代码里只有城镇/烟花/家具/小游戏的 UI 事件走它）
+        for name, fn in (("tick", w.tick), ("move_relate_handle", self.GK.unit_mgr.move_relate_handle),
+                         ("tick_unit_del_logic", w.tick_unit_del_logic)):
+            try:
+                fn()
+            except Exception:
+                key = "%s: %s" % (name, traceback.format_exc().strip().splitlines()[-1])
+                if not self.tick_errors[key] and self.verbose:
+                    print("[%s 异常 @帧%d] %s" % (name, self.game3d.frame_id(), "".join(traceback.format_exc(limit=-6).splitlines(True)[-14:])))
+                self.tick_errors[key] += 1
 
     def run(self, frames, every=None, cb=None):
         t0 = self.real_time()
