@@ -57,6 +57,7 @@
 - **碰撞层完成**：`drivers/sim/colworld.py`（numpy 碰撞内核）+ `natives/physx_collision.py`（接游戏 `CollisionManager`），射线/扫掠/静态测试/路径相交、过滤语义、球/盒子/胶囊三种形状都有调用处依据；自测 `t_colworld.py`、`t_physx.py`。
 - **服务端模式 AI 孤岛完成**：`python run1v4.py 1 300 --server-ai`，人机 AI 走服务端完整逻辑。
 - **导航层完成**：官方 Detour v1.6.0 接 `scene_detour`（`natives/detour.py`），自测 `t_detour.py`。普通导航与 tilecache 资源缺，暂回退到 AI 导航。
-- **角色仍不动**，只剩一处缺口：密码机 `ai_fix_angle/ai_fix_pos`（服务端算法不在客户端脚本里）。之后才是 RL 动作/观测接口。
+- **修机站位已重建**（共用层 `get_pos_for_ai`，录像旁证，SKILL §9.11）：**4 个求生者已能移动**；走到交互点后卡在交互根运动（动画数据要走服务端 pydata 读法），监管还不动。之后才是 RL 动作/观测接口。
 
 本机运行（Windows，`drivers\sim` 下，不要加 `-I`）：先 `python natives\detour_c\build.py`，再 `python t_detour.py`、`python run1v4.py 1 300 --server-ai`，完整命令见 SKILL §9.6.5。
+

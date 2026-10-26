@@ -56,11 +56,45 @@ class ServerGeneratorShim(object):
         SHIM_STATS["密码机站位预计算"] += 1
 
 
+class SkadaMgrShim(object):
+    """服务端 room.skada_mgr（战斗评分/统计）。
+    - 读（AI，全部调用处）：civilian_action_score_recored / butcher_action_count，形状 {uid: {str(行为编号): 次数}}，
+      只读 CIVILIAN_SCORE_ACTION.CURE / CURE_HANG、BUTCHER_SCORE_ACTION.HOOK_KILL（HangOutMgr 把 CURE_HANG 直接当 cure_hang_times）。
+    - 写：游戏逻辑调 add_civilian_score(uid, 行为[, data])（如 ButcherFlashlight）。推断按"次数 +1"记（方法名 + 读取处当次数用）。
+      监管侧的写入方法名在客户端脚本里没见到，出现时按 __getattr__ 记录方法名（SHIM_STATS），再补。
+    - 其余方法（check_combat_performance、set_qianfeng_score_params 等，评分表现层）空操作并记录。"""
+
+    def __init__(self):
+        self.civilian_action_score_recored = collections.defaultdict(dict)
+        self.butcher_action_count = collections.defaultdict(dict)
+
+    def add_civilian_score(self, uid, action, *a, **k):
+        d = self.civilian_action_score_recored[uid]
+        d[str(action)] = d.get(str(action), 0) + 1
+        SHIM_STATS["skada.add_civilian_score"] += 1
+
+    def __getattr__(self, n):
+        if n.startswith("__"):
+            raise AttributeError(n)
+        SHIM_STATS["skada.%s(空操作)" % n] += 1
+        return lambda *a, **k: None
+
+
+class ServerUnitShim(object):
+    def sync_pos_dir(self, *a, **k):
+        # 服务端把位置/朝向推给客户端的网络同步：iLogicCivilian.leave_cured_range 里 `set_position(...)` 之后 `if SERVER_MODE: sync_pos_dir()`。
+        # 本地服务端与客户端共用同一个单位对象，没有要同步的对象 → 空操作
+        SHIM_STATS["sync_pos_dir(空操作)"] += 1
+
+
 def install_unit_shims():
     from ClientUnits.GeneratorUnit import GeneratorUnit
+    from ClientUnits.BaseUnit import BaseUnit
     for name in ("_ai_slot_keys", "_ai_slot_pos", "init_ai_fix_angle", "precompute_pos_for_ai"):
         if not hasattr(GeneratorUnit, name):
             setattr(GeneratorUnit, name, getattr(ServerGeneratorShim, name))
+    if not hasattr(BaseUnit, "sync_pos_dir"):
+        BaseUnit.sync_pos_dir = ServerUnitShim.sync_pos_dir
 
 
 class ServerRoomShim(object):
@@ -89,6 +123,7 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
         self.world_type = ComuKeys.GAME_WORLD_TYPE.NOVICE_BATTLE
         self.rng = random.Random(0)
         self.roles = {}             # uid -> (role, pid, bt)
+        self.skada_mgr = SkadaMgrShim()
 
     def _init_client_battle_info(self, info_dict):
         super(WorldSim1v4, self)._init_client_battle_info(info_dict)

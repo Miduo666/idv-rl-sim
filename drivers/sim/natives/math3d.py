@@ -200,6 +200,7 @@ class matrix(object):
                       v.x * m[0][1] + v.y * m[1][1] + v.z * m[2][1],
                       v.x * m[0][2] + v.y * m[1][2] + v.z * m[2][2])
     mulvec3x4 = transform_coord
+    mulvec3x3 = transform_normal       # 只乘 3×3 旋转部分（RootMotionClassicComponent._local_2_world_offset：局部偏移转世界）
 
     @property
     def translation(self): return vector(self.m[3][0], self.m[3][1], self.m[3][2])
@@ -272,6 +273,19 @@ def matrix_to_rotation(m):
 
 def rotation_to_matrix(q):
     return q.to_matrix()
+
+
+def euler_to_rotation(v):
+    """欧拉角(弧度, vector(x, y, z)) -> 四元数。游戏用例只有 (0, yaw, 0)（CivilianUnit._save_foot_print_pos）和全零：
+    绕 Y 转 yaw 后 forward 行 = (sin yaw, 0, cos yaw)，与游戏朝向约定 (sin a, cos a) 一致。
+    一般情况按 q = qy · qx · qz 组合 —— 顺序无依据（没有非零 x/z 的用例），出现时要先核对。"""
+    x, y, z = (v.x, v.y, v.z) if hasattr(v, "x") else tuple(v)
+    def mul(a, b):
+        return rotation(a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+                        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z)
+    if x or z:
+        MISSING[("math3d", "euler_to_rotation(非纯偏航)")] = MISSING.get(("math3d", "euler_to_rotation(非纯偏航)"), 0) + 1
+    return mul(mul(rotation.from_axis_angle((0, 1, 0), y), rotation.from_axis_angle((1, 0, 0), x)), rotation.from_axis_angle((0, 0, 1), z))
 
 
 def __getattr__(name):
