@@ -56,6 +56,34 @@ class ServerGeneratorShim(object):
         SHIM_STATS["密码机站位预计算"] += 1
 
 
+class _NoScore(object):
+    """"永不满足"的评分阈值：比较全为假、迭代为空、下标/属性取回自身。"""
+    def __lt__(self, o): return False
+    __le__ = __gt__ = __ge__ = __lt__
+    def __eq__(self, o): return False
+    def __ne__(self, o): return True
+    __hash__ = object.__hash__
+    def __iter__(self): return iter(())
+    def __len__(self): return 0
+    def __getitem__(self, k): return self
+    def __getattr__(self, n):
+        if n.startswith("__"):
+            raise AttributeError(n)
+        return self
+
+
+class _NoScoreParams(object):
+    """服务端 skada_mgr.action_param_cache：各角色"战绩表现"评分的阈值参数（39 个字段，如 lawyer_find_generator_time、dance_tease_p、
+    paoku_dash_trigger_dis_lv1）。客户端脚本只读不写，配置在服务端。用途全是 add_civilian_score 加分或表现标志
+    （dancer/gardener_tease_butcher_flag 只在初始化与评分里出现）；AI 只读 CURE/CURE_HANG/HOOK_KILL 三种评分（§9.11）→
+    全部给"永不满足"的阈值 = 表现评分不触发，对局逻辑不受影响。按字段计数。"""
+    def __getattr__(self, n):
+        if n.startswith("__"):
+            raise AttributeError(n)
+        SHIM_STATS["skada.action_param_cache.%s(不触发)" % n] += 1
+        return _NoScore()
+
+
 class SkadaMgrShim(object):
     """服务端 room.skada_mgr（战斗评分/统计）。
     - 读（AI，全部调用处）：civilian_action_score_recored / butcher_action_count，形状 {uid: {str(行为编号): 次数}}，
@@ -67,6 +95,7 @@ class SkadaMgrShim(object):
     def __init__(self):
         self.civilian_action_score_recored = collections.defaultdict(dict)
         self.butcher_action_count = collections.defaultdict(dict)
+        self.action_param_cache = _NoScoreParams()
 
     def add_civilian_score(self, uid, action, *a, **k):
         d = self.civilian_action_score_recored[uid]
@@ -87,14 +116,81 @@ class ServerUnitShim(object):
         SHIM_STATS["sync_pos_dir(空操作)"] += 1
 
 
+def _wood_oneway_tag(self):
+    # 服务端窗的单向标志。读处（AICivilian.start_span_window/qaai_span_window/qaai_get_hiding_move_position_new、HidingCircle、
+    # iCommonButcher/iCommonMove/iCommonPlayer）都当真值判断或原样传给 player_span_check(uid, 类型, 单向标志)。
+    # 客户端同一概念是 InteractiveUnit.oneway_tag（建单位参数 oneway_tag，否则场景模型属性 window_oneway，否则 False）。
+    # 模拟器里模型属性是假值桩 → 归一成 bool。
+    v = getattr(self, "oneway_tag", False)
+    return v if isinstance(v, (bool, int)) else False
+
+
+def _unit_pos_get(self):
+    return self.get_position3()
+
+
+def _unit_pos_set(self, v):
+    self.set_position(v)
+
+
+def _door_pair_server(orig, mine, other_getter):
+    """UnitManager.get_switch_from_door / get_door_from_switch 的服务端分支：按 door_idx 配对。
+    AI 跑的是服务端逻辑（AICivilian 把开门目标设成电闸后再调 get_switch_from_door(电闸 uid)，服务端分支返回电闸自身；
+    客户端分支去读电闸模型的 'door' 属性，模拟器里没有 → None → qaai_open_door 每帧崩）。两边都有 door_idx 时走服务端分支，否则原样。"""
+    def f(self, uid):
+        u = self.get_unit(uid)
+        idx = getattr(u, "door_idx", None) if u is not None else None
+        if idx is not None:
+            for s in other_getter(self):
+                if getattr(s, "door_idx", None) == idx:
+                    return s
+            return None
+        return orig(self, uid)
+    return f
+
+
+def _door_pos_for_ai_no_overlap(self, civ_uid=None):
+    # 服务端大门方法：AICivilian.qaai_set_action('move', DOOR) / AIBattleEvent.handle_escape_event 取逃生站位。
+    # 共用层 iLogicDoor.get_pos_for_ai = get_feasible_position3()（门位置沿朝向往外退 run_away_area[1]+DETOUR_SEARCH_HALF，即逃生区里的点）。
+    # "no_overlap" 按 uid 怎么错开没有依据 → 推断：取同一点（逃生判定只看是否进入逃生区）。
+    SHIM_STATS["door.get_pos_for_ai_no_overlap(推断=get_pos_for_ai)"] += 1
+    return self.get_pos_for_ai()
+
+
+def _ability_has_skill_and_same_level(self, skill_id, level):
+    # 服务端 Ability 方法：GlobalHookScoreCal.judge_genius_lv 对 level 0..3 逐个问"带了这个天赋且等级相同吗"，
+    # EffectSkillInfoListComponent 同用。客户端 Ability.get_skill_level(id) = passive_skill_dct.get(id)（天赋 id → 等级）。
+    d = getattr(self, "passive_skill_dct", None) or {}
+    return d.get(skill_id) == level
+
+
 def install_unit_shims():
     from ClientUnits.GeneratorUnit import GeneratorUnit
     from ClientUnits.BaseUnit import BaseUnit
+    from ClientUnits.WoodUnit import WoodUnit
+    from ClientUnits.BattlePlayerUnit import BattlePlayerUnit
+    from ClientUnits.DoorUnit import DoorUnit
+    from ClientUnits.Ability import Ability
+    from common_cs.mgr.UnitManager import UnitManager
+    if not hasattr(DoorUnit, "get_pos_for_ai_no_overlap"):
+        DoorUnit.get_pos_for_ai_no_overlap = _door_pos_for_ai_no_overlap
+    if not hasattr(Ability, "has_skill_and_same_level"):
+        Ability.has_skill_and_same_level = _ability_has_skill_and_same_level
+    # 服务端单位的 .pos = 位置向量（GlobalHookScoreCal.get_game_info 读 civi.pos / but_unit.pos 算距离；AICivilian.qaai_can_dig
+    # 临时写 owner.pos = 目标点再写回）。只挂角色基类：CrossSFXUnit/FireworkVolleyBallUnit 自己有普通属性 self.pos。
+    if "pos" not in BattlePlayerUnit.__dict__:
+        BattlePlayerUnit.pos = property(_unit_pos_get, _unit_pos_set)
+    if not getattr(UnitManager.get_switch_from_door, "_sim_shim", False):
+        UnitManager.get_switch_from_door = _door_pair_server(UnitManager.get_switch_from_door, "door", lambda m: m.get_switch_units())
+        UnitManager.get_door_from_switch = _door_pair_server(UnitManager.get_door_from_switch, "switch", lambda m: m.get_door_units())
+        UnitManager.get_switch_from_door._sim_shim = UnitManager.get_door_from_switch._sim_shim = True
     for name in ("_ai_slot_keys", "_ai_slot_pos", "init_ai_fix_angle", "precompute_pos_for_ai"):
         if not hasattr(GeneratorUnit, name):
             setattr(GeneratorUnit, name, getattr(ServerGeneratorShim, name))
     if not hasattr(BaseUnit, "sync_pos_dir"):
         BaseUnit.sync_pos_dir = ServerUnitShim.sync_pos_dir
+    if not hasattr(WoodUnit, "wood_oneway_tag"):
+        WoodUnit.wood_oneway_tag = property(_wood_oneway_tag)
 
 
 class ServerRoomShim(object):
@@ -103,6 +199,24 @@ class ServerRoomShim(object):
     # 否则按真人求生者段位均值(unit.avatar)算。模拟器对应"自定义房 + 手选难度"。
     room_type = ComuKeys.ROOM_TYPE.CUSTOM
     player_set_ai_level = (ComuKeys.CUSTOM_AI_LEVEL.LV_3, ComuKeys.CUSTOM_AI_LEVEL.LV_3)
+    # iLogicGenerator.check_lawyer_fix_generator_score（律师开局找机评分）：先查 dict[uid]，否则取 end_camera_rot_time；
+    # 为 None 时函数自己 return（不加分）。两者客户端只读不写（服务端在开局镜头转完时记）→ 取"没有记录"。
+    end_camera_rot_time_dict = {}
+    end_camera_rot_time = None
+
+    class _NoviceTaskMgr(object):
+        # 新手教程任务（worlds.BattleTask）：GeneratorUnit.complete_fixed 等在 world_type == NOVICE_BATTLE 时调 room.task_mgr.send_task_event。
+        # 模拟器为了置 is_battle_client 借用了 NOVICE_BATTLE 类型，但不是教程局（task_mgr 只有 WorldBattleClientNovice 有）→ 空操作计数。
+        def __getattr__(self, n):
+            if n.startswith("__"):
+                raise AttributeError(n)
+            SHIM_STATS["task_mgr.%s(新手任务,空操作)" % n] += 1
+            return lambda *a, **k: None
+    task_mgr = _NoviceTaskMgr()
+    # 新手局的胜负计数：iLogicCivilian.die / ResurrectionComponent.real_die 在 world_type == NOVICE_BATTLE 时先给
+    # cur_world.already_die_num += 1 再调 _die（缺了它淘汰流程在这里中断、被淘汰者永不离场）；只有 WorldBattleClientNovice.game_tick 读。
+    already_die_num = 0
+    already_win_num = 0
 
     def _get_all_generator_fix_rate(self, fast=False):
         # AICivilian.qaai_is_needed_save / AIEnvCombatUtility.cal_generator_score：
@@ -150,6 +264,16 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
             u = self.unit_mgr.get_unit(uid)
             if not hasattr(u, "avatar"):
                 u.avatar = None     # 服务端单位上挂真人账号对象；人机为 None（AIHelper.cal_civilian_ave_part 按此跳过）
+            if self.roles[uid][0] == "butcher" and not getattr(u, "speed", 0):
+                # 求生者 CivilianUnit.__init__ 置 speed = 配表 move_speed（25）；监管单位类没有这一行，客户端一直是 0。
+                # AICivilian.qaai_black_cal_hiding 用 距离/butcher.speed 比谁先到出口 → 0 除。按求生者同款规则取配表 move_speed（厂长 56 = speed_real）
+                u.speed = GK.DM.player[self.roles[uid][1]].get("move_speed", 0)
+            if self.roles[uid][0] == "civilian" and not hasattr(u, "escape_source_hook"):
+                # 服务端求生者成员：AIEnvCombatUtility(New).cal_hangcivi_score 判 `u.escape_source_hook and u.escape_source_hook.during_hook_escape`
+                # （正在从哪张椅子自救挣脱）。只在 AI 里读、客户端无写入；读前有真值判断 → 默认 None = 没有在挣脱。
+                # 缺了它 AICommonTrigger.tick 每次算救人分都抛，整帧 game_tick 后半段被跳过。
+                u.escape_source_hook = None
+                u.escape_dest_hook = None    # 同上（cal_hangcivi_score 下一行，同样只读、带真值判断）
             if self.roles[uid][0] == "civilian" and not hasattr(u, "punish_start_timestamp"):
                 # 服务端求生者成员。全部脚本只有一处读：QAAIButcher.get_in_butcher_sight_or_chase_civis 判 `civ.punish_start_timestamp > 0`
                 # （>0 = 处罚已开始）。开局未受处罚 → 任何 ≤0 的值等价，取 0
@@ -161,6 +285,14 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
             g.ai_fix_pos = {}
             g.init_ai_fix_angle()
             g.precompute_pos_for_ai()
+        # 服务端门/电闸的 door_idx（建单位参数，服务端填；日志代码按字符串 '1' 比较）= 场景模型属性 door / switch_l 的值（DM.pos_info 第 4 列）
+        for kind, units in (("door", self.unit_mgr.get_door_units()), ("switch_l", self.unit_mgr.get_switch_units())):
+            for u in units:
+                if getattr(u, "door_idx", None) is None and u.model is not None:
+                    v = u.model.get_attr(kind)
+                    if isinstance(v, str):
+                        u.door_idx = v
+                        SHIM_STATS["door_idx 取场景属性 %s" % kind] += 1
         self._attach_bt_ais()
 
     def _attach_bt_ais(self):

@@ -144,6 +144,40 @@ DN_API int dn_poly_height(void* hv, unsigned int ref, const float* pos, float* h
     return dtStatusSucceed(h->query->getPolyHeight(ref, pos, height)) ? 1 : 0;
 }
 
+// NeoX 内置 Detour 的 getPolyHeight（libclient 热更版 0x8ea0e50 反汇编：getTileAndPolyByRef → 逐个细节三角形
+// dtClosestHeightPointTriangle，成功 0x40000000 / 失败 0x80000008）。v1.6 版先做严格的 dtPointInPolygon，
+// 点正好落在多边形边/顶点上（如出生点 (1828,1800)）会失败；这里照旧版写法，三角形判定含边界。
+DN_API int dn_poly_height_legacy(void* hv, unsigned int ref, const float* pos, float* height) {
+    DN* h = (DN*)hv;
+    const dtMeshTile* tile = 0;
+    const dtPoly* poly = 0;
+    if (dtStatusFailed(h->mesh->getTileAndPolyByRef(ref, &tile, &poly))) return 0;
+    if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION) {
+        const float* v0 = &tile->verts[poly->verts[0] * 3];
+        const float* v1 = &tile->verts[poly->verts[1] * 3];
+        const float d0 = dtVdist2D(pos, v0), d1 = dtVdist2D(pos, v1);
+        const float u = d0 / (d0 + d1);
+        if (height) *height = v0[1] + (v1[1] - v0[1]) * u;
+        return 1;
+    }
+    const unsigned int ip = (unsigned int)(poly - tile->polys);
+    const dtPolyDetail* pd = &tile->detailMeshes[ip];
+    for (int j = 0; j < pd->triCount; ++j) {
+        const unsigned char* t = &tile->detailTris[(pd->triBase + j) * 4];
+        const float* v[3];
+        for (int k = 0; k < 3; ++k) {
+            if (t[k] < poly->vertCount) v[k] = &tile->verts[poly->verts[t[k]] * 3];
+            else v[k] = &tile->detailVerts[(pd->vertBase + (t[k] - poly->vertCount)) * 3];
+        }
+        float hh;
+        if (dtClosestHeightPointTriangle(pos, v[0], v[1], v[2], hh)) {
+            if (height) *height = hh;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 DN_API int dn_closest_on_poly(void* hv, unsigned int ref, const float* pos, float* out) {
     DN* h = (DN*)hv;
     return dtStatusSucceed(h->query->closestPointOnPoly(ref, pos, out, 0)) ? 1 : 0;

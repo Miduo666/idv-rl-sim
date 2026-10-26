@@ -660,7 +660,9 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 #### 9.6.0 一句话现状（2026-10-26）
 **5 个人机角色都能在军工厂里自主移动：求生者去修机/躲藏，监管追人**（`run1v4.py 1 450 --server-ai`，0.7 倍速）。
 碰撞（§9.6.1）、服务端模式 AI 孤岛（§9.6.2）、导航（§9.10）、修机站位（§9.11）、主循环补全（§9.12）都已完成。
-**当前唯一的硬阻塞：交互动画（修机/翻窗/踩板/救人/挂椅）的根运动位移数据**——客户端脚本里没有，方案待用户选（§9.12.3）。待办清单见 §9.6.3。
+**2026-10-26 更新：交互根运动已解决**——解析引擎动画资源（§9.13），根骨骼位移与录像终点精确吻合，求生者已进入修机结算、监管踩板/求生者放板带真实位移。
+当前阻塞变成几个服务端成员缺口（`wood_oneway_tag`、`end_camera_rot_time_dict`、躲藏目标 None），见 §9.13 末尾与 §9.6.3。
+**2026-10-26 再更新：第一次打完一整局（§9.15，360 秒监管四杀，tick 异常 0），模拟可复现（§9.14）。** 下一步 = 多局统计校验。
 
 以下是 2026-10-25 的记录：
 - **碰撞层完成**：`.scn_col` 静态网格 + 板/窗/门/角色等动态体，射线、扫掠、静态测试、路径相交全部接上游戏的 `CollisionManager`，
@@ -736,8 +738,9 @@ col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, 
 - **2026-10-26 导航层接上后**（§9.10）：`dis=None` 消失；唯一剩下的是密码机 `ai_fix_angle`（`AICommonTrigger._init_gen_fixdir` 每帧中断），角色仍不动。1.1 倍速。
 
 #### 9.6.3 待办清单（2026-10-26，按优先级）
-1. **【待用户决策】交互动画根运动位移**（硬阻塞，§9.12.3）：三个方案（置零+录像逐步补 / 解析引擎角色动画资源 / 只置零），用户还没选。
-2. **求生者躲藏目标**：`AICivilian.qaai_get_current_best_hiding_target`（3775 行）`None / float`，450 帧里 82 次，来源未查（§9.12.4）。
+1. ~~交互动画根运动位移~~ —— **2026-10-26 已解（§9.13，方案 2 解析引擎动画资源）**。遗留：`span` 两次录像对不上（变体动画？）、`default_loop/default_rate` 未进数据库、格式 0（极少）未解。
+1b. ~~服务端成员缺口 / 运行不确定性~~ —— **2026-10-26 已补（§9.14）**；躲藏目标 `None` 判为游戏自身 bug 保留（待真服务端行为验证）。
+2. ~~求生者躲藏目标~~：来源已查清 = 窗中心不在 AI 导航上，按引擎语义取不到高度（§9.14），保留。
 3. **性能**：0.7 倍速（450 帧墙钟约 23 秒）；导航查询每帧上百次（`get_path`/`get_height`），碰撞射线每帧十几次。先 profile 再优化（缓存寻路、减少 tick）。
 4. **找回普通导航与 tilecache**（还原度，§9.10）：设备场景包 `res_pull/scene_pkg/` 里有 222 个 MSET / 11 个 `TEST`，按分块世界包围盒配对出军工厂那份；`TEST` 压缩层格式要认；之后接 DetourTileCache（动态障碍）。
 5. **AI 打完一局** → 跑多局统计（胜率、时长、修机曲线）作模拟器正确性检查与 RL baseline（§9.6.4）。
@@ -768,8 +771,14 @@ python t_physx.py                        # 碰撞适配层自测（假 Collision
 python t_colconst.py                     # 打印真实 CollisionConst 常量 / UNIT_TYPE_CONF 编号名
 python colcheck.py ..\..\res_pull\resdump_1025_015456\res_recovered.zip scene/scene_battle/ordnance_factory1/nav/ordnance_factory1.scn_col scene/scene_battle/ordnance_factory1/nav/ordnance_factory_test1.nav
 python natives\detour_c\build.py         # 编官方 Detour（新机器/云端先跑一次）
+python natives\acl_c\build.py            # 编官方 ACL v1.2.1 解码（RAWANIMA 格式 1；新机器先跑一次）
+python rawanim_census.py ..\..\res_pull\chr_pkg\chr_player.idx ..\..\res_pull\chr_pkg\player_census.json   # 动画/配置普查（几分钟）
+python animdb_build.py ..\..\res_pull\chr_pkg\chr_player.idx ..\..\res_pull\chr_pkg\player_census.json ..\..\res_pull\chr_pkg\thd_chr_player.thy ..\..\res_pull\animdb dm65_survivor_w.skeleton h55_survivor_m_zbs.skeleton   # 生成根运动数据库（监管同理换 chr_boss / dm65_butcher_ll.skeleton）
+python replay_rootmotion.py ..\..\res_pull\replays\<guuid>          # 录像里交互根运动的终点（需 PYTHONPATH=逆向存档\_scripts）
 python t_detour.py                       # 导航层自测（真实军工厂 AI 导航）
 python run1v4.py 1 450 --server-ai       # 1v4 对局（约 20 秒）；末尾打印碰撞/导航统计、服务端垫片统计、调用样本
+python t_determinism.py 300 0            # 可复现检查：两个进程逐帧比位置（约 25 秒）
+python run_full.py 18000 900 0           # 整局（最多 10 分钟模拟，墙钟同量级）：每 900 帧打印机进度与求生者状态
 python replay_scan.py ..\..\res_pull\replays\<guuid> "<RPC 名正则>" 3    # 录像事件流概览（需 PYTHONPATH=逆向存档\_scripts）
 python fixslot_from_replay.py ..\..\res_pull\replays\<guuid>          # 录像里的修机方位键与站位对照
 python usage.py "<调用名正则>" "" 4 20 | Out-File -Encoding utf8 x.txt   # 查调用处用法（正则里最后一个标识符用来预筛 idx）
@@ -880,6 +889,123 @@ tilecache 导航 `…/ordnance_factory1_dynamic.nav` + `…_dynamic_cache.tileca
 #### 9.12.4 其它新暴露的问题（未查）
 - `AICivilian.qaai_get_current_best_hiding_target`（3775 行）`unsupported operand type(s) for /: 'NoneType' and 'float'`，450 帧里同一求生者 82 次。
 - 性能 0.7 倍速（主循环补全后从 1.2 降到 0.7，监管开始移动 + 碰撞扫掠增多）。
+
+### 9.13 ★ 引擎动画资源解析 → 根运动接上（2026-10-26，用户选 §9.12.3 方案 2）
+
+**结论：角色动画 `.animation`（`RAWANIMA`）格式全解，按内容就能认出动画（不用破路径哈希），根骨骼位移与录像终点精确吻合，已接进模拟器。**
+
+**资源**（2026-10-26 从设备 `su cat` 流式拉到 `res_pull/chr_pkg/`，5.8GB，39 个文件大小全对）：`chr_player.idx`+`2~8.wpk`(求生者)、`chr_boss.idx`+`2~6.wpk`(监管)、
+`chr_animgraph`/`chr_common`、`Documents/thd/chr_*.thh|thy` 清单、热更 `libclient_hot.so`（md5 `b6f53566…` = §7.5 版本）。apk 里只带 `chr_guanjia`/`chr_prop`（解到 `res_pull/apk_chr/`，格式探查用）。
+
+**`RAWANIMA` 格式**（`drivers/sim/rawanim.py` 文件头有完整说明）：
+```
+"RAWANIMA" [u32 总长][u32 0][u32 0][u32 HEAD偏移][8B ?][u32 ?][u32 ?][u32 n][n B 骨骼文件相对路径 如 ../dm65_survivor_w.skeleton]
+块 HEAD: [f32 帧率][f32 时长秒][8B ?][u8 格式 @+16]…   格式 2=关键帧(96%) 1=ACL(4%) 0=极少(17+18 个)
+块 NAME: [u32 串数][源动画名][骨骼名×(串数-1)]          源动画名 = 配置里的文件名 = 动画名（管家包 1534/1534）
+块 DATA 格式 2: [u8 =4] + 每根骨骼 { T: u16 n, n×(u16 帧, half3) / S: u16 n, n×(u16 帧, half3) / R: u16 n, n×(u16 帧, u32) } + 补零到 16 对齐
+  R 的 u32 = smallest-three：高 2 位=最大分量下标(xyzw)，其余三个按"最大分量之后的循环顺序"高位在前各 10 位，映射 [-1/√2,1/√2]
+块 DATA 格式 1: ACL v1.2.1 CompressedClip（tag 0xac10ac10、algorithm version 4；v1.1=3、v1.3=5 对不上）
+```
+- 布局验证（`rawanim_layout.py`）：格式 2 管家包 1096/1096、监管包 33279/33279 **恰好解析到块尾**（尾部只有补零）。最初误读成"u32 计数"，实为 u16 计数 + 第 0 帧帧号 0。
+- 四元数验证（`rawanim_quatfit.py`）：同骨骼文件 ACL 动画里的全局常量骨骼 **48/49 一致**（剩 1 个本身不是常量），相邻关键帧连续性 0.9992（次优映射 0.9976）。
+- ACL 用官方源码编：`natives/acl_c/build.py`（v1.2.1 头文件库 + 薄 C 封装，mingw 静态链接 → `natives/bin/acl_c.dll`），哈希校验通过、四元数模长 1。少数 ACL 片段头校验不过（别的版本），计数跳过。
+- 引擎侧：`libclient` 里 `0x0663xxxx` 一片是 RawAnimation 序列化（`0x663C138` 起拼 HEAD/DATA/NAME，`movconst.py` 找 MOVZ/MOVK 常量），走反射式 visitor，没继续追；格式最终靠数据+真值定。
+  工具：`drivers/movconst.py`（找立即数常量）、`drivers/relaptr.py`（按 `.rela.dyn` 解 vtable 指针）。
+
+**语义（游戏怎么用，伪源码 `AnimDataComponent` / `RootMotionClassicComponent`）**：
+- 本地服务端 `core.is_client()` 为假 → `RootMotionClassicComponent` 走 `NO_MODEL_MODE`（按 `game_time` 算动画时间）；`AnimDataComponent` 是 `READ_FROM_ROOT_MOTION` →
+  `model.get_animation_component().get_reference_to_first_frame_transform(动画, 毫秒/1000).translation`。
+- `new_pos = anim_start_pos + make_orient(anim_start_dir, up)·(local_offset − offset_to_erase)` → local 是**以起始朝向为 +z 的模型空间**。
+- 动画名：参数没给时取 `model.cur_anim_name`（引擎播放时更新）→ 模型必须记录播放。`common_tools.utils.play_animation` 调
+  `model.play_animation(名, 过渡, 过渡类型, 起始比例, loop, 速率, …)`，**第 4 参是比例**（pos/长度取小数），`anim_time`/`get_anim_length` 是**毫秒**。
+- **★ 录像真值**（`replay_rootmotion.py` + 模拟器导出的窗/板位置 `res_pull/replays/factory_windows_boards.json`）：录像 `sync_end_pos_dir.end_pos` 到最近窗/板中心的距离
+  = 解码出的根骨骼终点 z：`span2` 4.72(女)/5.27(男)、`span3` 9.24↔9.27(男)、`slide4` 11.36↔11.35(女)、`slide2/4` 13.7↔13.67(男)。
+  → half3 解码、动画原点=交互物中心、偏移 = 模型空间 T(t)−T(0)、缩放 1，全部坐实。**例外**：`span` 两次实测 9.56，解码女 13.98/男 15.09，对不上（猜是 `add_suffix_logic` 换了角色变体，未查）。
+  （录像起点含走位/吸附，起终点差不能当真值；用终点到交互物中心的距离。）`WoodUnit`=窗(17)、`PanelUnit`=板(43)。
+
+**模型 → 骨骼**（推断，`natives/animdb.py SKELETON_RULES`）：gim 不带自身路径，按目录结构：`chr/player/dm65_survivor_w/*` → `dm65_survivor_w`（女，6130 个动画）、
+`dm65_survivor_m/*` → `h55_survivor_m_zbs`（男，6510）、`dm65_survivor_boy|girl/*` → 同名、`chr/boss/butcher/*` → `dm65_butcher_ll`（厂长，710）。
+依据 `gim_scan.py`：男角色 gim 引用 `../h55_survivor_m_zbs/h55_survivor_m_zbs.skeleton`(64 处)、女 `../dm65_survivor_w.skeleton`(46)、厂长族 `../dm65_butcher_ll/…`。
+大量其它骨骼是皮肤配件（`*_e_*` 袖子/披风等，带同名动画）。编成里的模型：厂长 `chr/boss/butcher/butcher.gim`、医生 `dm65_survivor_w_yiyaoshi_lv1`、`h55_survivor_m_it_lv1`、`h55_survivor_m_qd_lv1`、`h55_survivor_w_hlz_lv1`。
+
+**数据库**（`animdb_build.py` → `res_pull/animdb/<骨骼>.json`，只存根骨骼 `biped` 的位移关键帧 + fps/时长 + 配置别名）：
+- 普查 `rawanim_census.py` → `res_pull/chr_pkg/{player,boss}_census.json`（求生者 86332 个 RAWANIMA、2497 个 AnimationConfig；监管 34765/1187）；gim 普查 `gim_scan.py` → `*_gim.json`。
+- 配置 Name≠文件名的别名约 1%（如 `close_0`→`close`），只收目录含 `animations_<骨骼>` 的条目。
+- 同名多份约 1%：两份都在 thd 当前清单里 = 不同目录的同名文件（如 `animations_dm65_survivor_w/yywf/`），归属分不出，取最后一份并计数。
+
+**接入**（只做查询 + 播放记录，不改游戏判定）：
+- `natives/animdb.py`：`table_for(模型路径)`、`offset(名, 秒)` = T(t)−T(0)（关键帧线性插值）、`length_ms`；没数据的动画零位移并计数 `STATS/MISSING`，`SimCore.report` 打印。
+- `natives/world.py model`：`get_animation_component()`（`get_reference_to_first_frame_transform`；动画图 `play_animation_graph`/`get_or_create_empty_animation_graph_instance` 给真值桩——
+  组件变成真值后 `AnimGraphComponent` 会走到这里，给假值桩就抛 `play_animation_graph failed!`）、`get_anim_ctrl()`（`get_anim_index_by_name` 无则 65535、`get_anim_length`、`get_anim_rate`=1.0）、
+  `get_anim_length`、`get_root_bone`=0、`play_animation`/`stop_animation`/`anim_time`/`anim_rate`/`is_playing`（按模拟时钟）。没有骨骼映射的模型（场景物件）保持原来的记录型桩。
+- 未做：`default_loop`/`default_rate` 没进数据库（`loop=2` 按不循环、计数）；`get_rootmotion_delta_transform` 只在客户端 ROOT_MOTION_MODE 用，返回单位阵并计数。
+
+**现状（`run1v4.py 1 900 --server-ai`，30 秒模拟，0.9~1.1 倍速）**：tick 异常 0；`play_animation` 275 次、位移查询 1549 次；用到的根运动：求生者 `repair`（最大 1.7，身体晃动）、
+厂长 `destroy`（踩板，5.05；录像中位 4.5）、男求生者 `smash`（放板，9.62；录像中位 8.4）。**求生者已进入修机结算流程**（`GeneratorFixComponent.process_fixed`）。
+新暴露（都是服务端成员缺口，不属根运动，**未补**）：窗 `WoodUnit.wood_oneway_tag`（监管行为树，900 帧 67 次）、房间 `end_camera_rot_time_dict`（`iLogicGenerator.check_lawyer_fix_generator_score`，修机时）、
+躲藏目标 `None / float`（§9.12.4，老问题）。另：同参数两次运行出错位置不同，模拟还不完全确定（随机/计时来源未查）。→ 均在 §9.14 处理。
+
+### 9.14 ★ 服务端缺口补完 + 导航取高度按引擎实现 + 可复现（2026-10-26）
+
+**服务端成员垫片（`sim1v4.py`，每条注明依据）**：
+- 窗 `WoodUnit.wood_oneway_tag`（单向窗）：读处全是真值判断或原样传给 `player_span_check(uid, 类型, 单向标志)`；客户端同概念 `InteractiveUnit.oneway_tag`
+  （建单位参数 → 场景模型属性 `window_oneway` → False）→ 属性垫片取它，假值桩归一成 bool。
+- 房间 `end_camera_rot_time_dict = {}` / `end_camera_rot_time = None`：只有 `iLogicGenerator.check_lawyer_fix_generator_score`（律师开局找机评分）读，为 None 时函数自己 return；客户端只读不写。
+- `skada_mgr.action_param_cache`（39 个"战绩表现"评分阈值字段，如 `lawyer_find_generator_time`、`dance_tease_p`、`paoku_dash_trigger_dis_lv1`）：服务端配置，客户端只读。
+  全部给"永不满足"的阈值对象 `_NoScore`（比较全假、迭代空、下标取回自身）= 表现评分不触发；依据：用途全是加分或表现标志，AI 只读 CURE/CURE_HANG/HOOK_KILL。
+
+**★ 导航 `get_height` 的引擎实现（libclient 热更版反汇编，`drivers/pymethods.py` 按 PyMethodDef 找绑定 → `SceneDetour` vtable `0x9f40a98`+0x1a0 → `0x8eb5780`）**：
+```
+findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mesh+0x288) → ref；getPolyHeight(ref, (x,y,z)) 失败 → None
+```
+- `ext` = `set_detour_extension` 设的值（游戏设 `(1, extent_y, 1)`，`extent_y` = 配表 `navmesh_search_box_y`，默认 4）；`s` = `mesh[0x1138]` 缩放，构造默认 1.0（`0x8eb2a30`），
+  `setExtension`（`0x8eb2fb4`）存 `ext×s`；**竖直半尺寸写死 4000**。
+- NeoX 内置的是 **v1.6 之前的 Detour**（没有 `dtNavMesh::getPolyHeight`；`dtNavMeshQuery::getPolyHeight` `0x8ea0e50` = 逐细节三角形 `dtClosestHeightPointTriangle`，成功 0x40000000 / 失败 0x80000008）。
+  官方 v1.6 先做严格 `dtPointInPolygon`，点正好落在多边形边/顶点上（出生点 `(1828,1800)` 这种整数坐标）会失败 → 封装里加了 `dn_poly_height_legacy` 照旧版写法。
+- 文档串（绑定自带 docstring，直接 `pymethods.py` 打出 doc 地址读）：`get_path(mesh, s, e, poly_search=256)` 的 **`poly_search` = 搜索多边形个数上限**（§9.10 原记"语义未知"）；
+  `get_height` 文档写的是 `(mesh, x, z)`"从 1000000 往下取最高点"，与实际 4 参实现不符，以反汇编为准。
+- 后果：**窗中心离 AI 导航 4–8 个单位（17 个窗全部），按引擎语义取不到高度** → `AICivilian.qaai_get_current_best_hiding_target` 3775/3776 行 `None / float`、`None - float`
+  在客户端 NavManager 下是必然的。**结论（推断）：这是游戏本身的 bug，真服务端也会抛、被单位 tick 外层吞掉**，模拟器保留不修。
+  ⚠ 未证实点：真服务端的 `room.get_detour_distance` 是服务端自己的实现（不在客户端），取高度方式可能不同；录像全是真人，验证不了。
+- **回退网格的近似**（`detour.get_height`，计数 `FALLBACK["get_height 回退网格边缘吸附(近似)"]`）：普通/tilecache 网格缺而落到 AI 网格时，严格取不到就在水平 `walkable_radius`(=6) 内吸附到 AI 网格最近点。
+  依据：两者只差墙边收缩距离，真网格边界最多比 AI 网格往外多 6。明确查 AI 网格的查询不吸附。效果：监管 `carry_tar_select` 的 `None < int` 623→5 次。
+- 找回普通导航的尝试（`nav_match.py`，场景包 15518 个分块按"AI 导航采样点覆盖率"配对）：106 个块坐标里覆盖率 ≥0.9 的候选是 AI 导航自身(半径 6)、牙医专用(半径 1)、另一张图(25,4,8)；
+  块名与 AI 导航一致的 MSET 只有 AI 导航本身 → **没找到普通/tilecache 导航**；导出时也没请求过这两个路径（`miss.jsonl`/`manifest.jsonl` 无记录），设备上有没有未知。
+
+**行为树异常的处理方式改了**（`run1v4.py counted_step`）：计数后**继续抛出**。游戏的 `behavior_step` 不吞异常，冒到单位 tick 外层（`UnitManager.tick_client`）才被吞，这一帧该单位 tick 剩余部分跳过；原来在包装里吞掉会让 `AICivilian.tick` 后半段照常执行。
+
+**★ 可复现**：`SimCore(seed=0)` 设 `random.seed`（+numpy）；`simcore.ensure_hashseed()` 没设 `PYTHONHASHSEED=0` 就带上重跑当前脚本（set 套 str 的遍历顺序）；时钟本来就是模拟时钟。
+`t_determinism.py 900 0`：两个独立进程 **900 帧逐帧位置完全一致**。之前"两次运行出错位置不同"、出生点不同的原因就是这两个。
+
+**整局驱动** `run_full.py [最多帧] [每段帧] [种子] [--verbose]`：每段打印密码机进度、求生者状态（离场/挂椅/倒地…）；淘汰者会从单位表移除、逃生者 `is_leave`，每人都有结局即停。
+
+### 9.15 ★ 第一次打完一整局（2026-10-26，`run_full.py 18000 900 0`）
+
+**结果（种子 0，军工厂，厂长 vs 4×qaai_civilian_hard，LV3 自定义人机房）**：模拟 360 秒结束，**监管四杀**：
+60s 140 号上椅(115)→120s 前淘汰；150s 141 号被扛起→180s 上椅(127)→240s 前淘汰；270s 139 号上椅(97)→360s 前淘汰；138 号 360s 同时出局。
+密码机 3 台修完（[57.8, 100, 5.8, 0.3, 100, 100, 14.9]）。**tick 异常 0、回调错误 0**；被吞异常只剩躲藏目标 None（§9.14，判为游戏自身 bug 保留，约 8700 次/局）。墙钟约 3 分钟（1–4.6 倍速，人少后变快）。
+
+**这一轮按整局暴露顺序补的（全在 `sim1v4.py` / `natives/`，每条注明依据）**：
+| 缺口 | 现象 | 处理 | 依据 |
+|---|---|---|---|
+| 扫掠/射线结果 `[3]` | 根运动撞墙修正 `max_move_dis*move_ratio` 里 None，第 713 帧起每帧 tick 异常把模拟卡死 | 填命中前路径比例 `Hit.t`；零长度扫掠填 0 | `RootMotionClassicComponent._fix_hit_col_intrp_find_pos` |
+| `room.task_mgr` | 修完机 `complete_fixed` 末尾抛 | 空操作计数 | 只在 `world_type == NOVICE_BATTLE` 发新手教程事件；模拟器借用该类型 |
+| `cur_world.already_die_num/already_win_num` | **淘汰流程中断，被淘汰者永不离场** | 两个 0 计数器 | `iLogicCivilian.die` 先 `+= 1` 再 `_die`；只有 `WorldBattleClientNovice.game_tick` 读 |
+| 场景模型属性 `model.get_attr` | 门↔电闸配不上（`get_switch_from_door` 客户端分支比 `switch_l == door`） | **`DM.pos_info` 每行第 4 列就是属性值，属性名 = 类别名**（门 door='2'/'1'、电闸 switch_l='2'/'1'） | 配表实测 |
+| 门/电闸 `door_idx` + 配对走服务端分支 | AI 把开门目标设成电闸再调 `get_switch_from_door(电闸 uid)`，客户端分支读电闸的 door 属性 → None | `door_idx` = 场景属性值；两边都有 door_idx 时按 door_idx 配对（服务端分支，返回电闸自身） | `UnitManager.get_switch_from_door` 服务端分支；`AICivilian.qaai_set_action` 2594 行 |
+| 角色 `.pos` | 监管选椅 `GlobalHookScoreCal.get_game_info` 读 `civi.pos` 抛 → **不挂人** | `BattlePlayerUnit.pos` 读=get_position3、写=set_position（只挂角色基类：`CrossSFXUnit`/`FireworkVolleyBallUnit` 有同名普通属性） | 读处当坐标；`qaai_can_dig` 临时写 owner.pos 再写回 |
+| `Ability.has_skill_and_same_level` | 监管选椅 `judge_genius_lv` 抛 → **不挂人** | `passive_skill_dct.get(id) == level` | 客户端 `Ability.get_skill_level(id) = passive_skill_dct.get(id)` |
+| `DoorUnit.get_pos_for_ai_no_overlap(uid)` | 求生者去出口抛（3 万次/局） | 推断 = `get_pos_for_ai()`（同一点） | 共用层 `iLogicDoor.get_pos_for_ai = get_feasible_position3`；"不重叠"错开方式无依据 |
+| 监管 `.speed` | `qaai_black_cal_hiding` 距离/butcher.speed 除零 | 配表 `move_speed`（厂长 56 = speed_real） | 求生者 `CivilianUnit.__init__` 置 speed = data.move_speed；监管类没有这一行 |
+| 求生者 `escape_source_hook/escape_dest_hook` | `AICommonTrigger.tick` 算救人分抛，整帧 game_tick 后半段被跳过 | None | 只在 AI 读、带真值判断、客户端无写入 |
+
+**之前没注意到的事实**：`run1v4.py` 吞行为树异常曾掩盖了"单位 tick 后半段被跳过"（§9.14 已改为照样抛出）；淘汰后单位直接从单位表移除（不是 is_leave）。
+
+**下一步（§9.6.4 路线 3）**：多种子跑 N 局统计（胜负、时长、修机曲线、上椅次数）——目前只有 1 局样本，监管四杀、修机偏慢是否像真实人机局还没法判断；
+躲藏目标 None 每局 8700 次、可能显著削弱求生者躲藏，是否真是游戏 bug 是最大的保真度疑点。
+- 2026-10-26 轨迹可视化（900 帧，录制/渲染脚本在当时会话的 scratchpad：`rec1v4.py` 逐帧记位置 → `render_tracks.py` 画在 AI 导航多边形上的俯视图）：
+  3 个求生者 9–21 秒走到密码机后停下，此时有机子在涨进度（30 秒时 3 台机分别为 35/21/18），**停下是在修机，不是卡死**；监管 17.5 秒追上一名求生者，之后两人相距 7、一起定住，推断是攻击动作走到根运动后卡住（§9.12.3），没有逐条验证。
+  新暴露的被吞异常：`WoodUnit` 缺 `wood_oneway_tag`（6 次，翻窗相关，推断是服务端成员）、`WorldSim1v4` 缺 `end_camera_rot_time_dict`（1 次）。
 
 ---
 

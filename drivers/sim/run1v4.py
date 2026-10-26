@@ -3,6 +3,8 @@
 --server-ai：开服务端模式 AI 孤岛（SimCore.install_server_ai_island），人机 AI 走服务端完整逻辑。"""
 import sys, os, traceback, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import simcore
+simcore.ensure_hashseed()
 from simcore import SimCore
 
 SERVER_AI = "--server-ai" in sys.argv
@@ -19,6 +21,8 @@ _bstep = BT.behavior_step
 
 
 def counted_step(name, owner):
+    # 只计数、照样抛出：游戏的 behavior_step 不吞异常，冒到单位 tick 外层(UnitManager.tick_client)才被吞，
+    # 这一帧该单位 tick 剩下的部分会跳过。在这里吞掉会让 AICivilian.tick 后半段照常执行，和游戏不一致。
     BT_CALLS[owner.uid] += 1
     try:
         return _bstep(name, owner)
@@ -27,6 +31,7 @@ def counted_step(name, owner):
         if not BT_ERRS[(owner.uid, k)]:
             print("[bt 异常 uid=%s] %s" % (owner.uid, "".join(traceback.format_exc(limit=-5).splitlines(True)[-10:])))
         BT_ERRS[(owner.uid, k)] += 1
+        raise
 BT.behavior_step = counted_step
 
 

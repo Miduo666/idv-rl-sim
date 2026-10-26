@@ -9,7 +9,7 @@
   sweep_test(col, s, e, group, layer, face_filter, filter_type)     sweep_test_new(col, s, e, group, ignore, extra, layer, face_filter, filter_type)
   sweep_intersect(col, s, e, group, layer, filter_type)             sweep_intersect_new(col, s, e, group, ignore, extra, layer, filter_type)
   static_test(col, group, layer, filter_type)                       static_test_new(col, group, ignore, extra, layer, filter_type)
-返回：射线/扫掠 = 6 元组 [命中, 命中点, 法线, ?, ?, 碰撞体]（[3][4] 调用处没见用过，填 None）；static/intersect = 碰撞体列表。
+返回：射线/扫掠 = 6 元组 [命中, 命中点, 法线, 移动比例 t, ?, 碰撞体]（[3] = 命中前走过的路径比例 0~1：RootMotionClassicComponent._fix_hit_col_intrp_find_pos 用 max_move_dis*move_ratio；[4] 无用例填 None）；static/intersect = 碰撞体列表。
 ✅ 全部查询已接 ColWorld，过滤见 passes()；动态体在每次查询前按位置同步。查询体/动态体的 size 含义按形状逐个登记（SHAPE_QUERY），
 未登记的形状不参与（UNSUPPORTED 计数）—— 已登记球、盒子、胶囊（角色）。盒子作查询体时支持重叠类查询，连续扫掠未实现。"""
 import itertools, collections, os, sys, zipfile
@@ -334,7 +334,7 @@ class scene_col(_Base):
         if h is None:
             return list(NO_HIT)
         QUERY_HITS[name] += 1
-        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), None, None, self._obj(h.key)]
+        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), float(h.t), None, self._obj(h.key)]
 
     def hit_by_ray(self, s, e, face_filter=0, group=0, layer=None, filter_type=None, *a):
         return self._ray("hit_by_ray", (s, e, face_filter, group, layer, filter_type) + a, s, e, group, (), (), layer, filter_type)
@@ -365,7 +365,7 @@ class scene_col(_Base):
             if not keys:
                 return list(NO_HIT)
             QUERY_HITS[name] += 1
-            return [True, None, None, None, None, [self._obj(k) for k in keys]]
+            return [True, None, None, 0.0, None, [self._obj(k) for k in keys]]   # 零长度：移动比例 0
         if g[0] != "capsule":
             UNSUPPORTED["%s 盒子扫掠" % name] += 1   # 盒子的连续扫掠还没实现
             return list(NO_HIT)
@@ -376,7 +376,7 @@ class scene_col(_Base):
         QUERY_HITS[name] += 1
         if h.start_overlap:
             QUERY_HITS[name + ":起点已重叠"] += 1      # 起点就压着东西时原生怎么返回没有依据，暂按 t=0 命中返回
-        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), None, None, self._obj(h.key)]
+        return [True, vector(*map(float, h.point)), vector(*map(float, h.normal)), float(h.t), None, self._obj(h.key)]
 
     def sweep_test(self, col, s, e, group=0, layer=None, face_filter=0, filter_type=None, *a):
         return self._sweep("sweep_test", (col, s, e, group, layer, face_filter, filter_type) + a, col, s, e, group, (), (), layer, filter_type)

@@ -18,9 +18,25 @@ VISUAL = [("core.FogManager", "FogManager"), ("core.CorrManager", "CorrManager")
           ("core.ColorBindLessMgr", "ColorBindLessMgr"), ("core.SfxManager", "SFXManager")]
 
 
+def ensure_hashseed(seed="0"):
+    """字符串哈希随机化会让 set 的遍历顺序每个进程都不同（游戏里大量 set 套 str/tuple）。
+    PYTHONHASHSEED 只能在解释器启动前设：没设就带上环境变量重跑当前脚本。驱动脚本最开头调用。"""
+    if os.environ.get("PYTHONHASHSEED") == str(seed):
+        return
+    import subprocess
+    env = dict(os.environ, PYTHONHASHSEED=str(seed))
+    sys.exit(subprocess.call([sys.executable] + sys.argv, env=env))
+
+
 class SimCore(object):
-    def __init__(self, verbose=True, server_ai=False):
+    def __init__(self, verbose=True, server_ai=False, seed=0):
         self.verbose = verbose
+        # 可复现：全局 random（游戏逻辑直接用 random.random/choice）；时钟已是模拟时钟（install_clock）
+        import random
+        random.seed(seed)
+        if "numpy" in sys.modules:
+            sys.modules["numpy"].random.seed(seed)
+        self.seed = seed
         self.GK = GK = simboot.boot(verbose)
         import game3d, math3d, simpatch
         self.game3d, self.math3d, self.simpatch = game3d, math3d, simpatch
@@ -143,6 +159,8 @@ class SimCore(object):
         print("== 导航载入:", detour.LOADED)
         print("== 导航查询:", dict(detour.QUERIES), " 回退到 AI 导航:", dict(detour.FALLBACK),
               " 终点不可达(部分路径):", dict(detour.PARTIAL), " 推断/空操作:", dict(detour.UNIMPL))
+        import animdb
+        print(animdb.report())
         simenv.report(top)
 
 

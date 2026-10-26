@@ -48,6 +48,7 @@ def lib():
         L.dn_query_box.argtypes = [vp, fp, fp, us, us, ctypes.POINTER(u), i]
         L.dn_circle.argtypes = [vp, fp, f, fp, us, us, ctypes.POINTER(u), i]
         L.dn_poly_height.argtypes = [vp, u, fp, fp]
+        L.dn_poly_height_legacy.argtypes = [vp, u, fp, fp]
         L.dn_closest_on_poly.argtypes = [vp, u, fp, fp]
         L.dn_set_flags.argtypes = [vp, u, us]
         L.dn_get_flags.argtypes = [vp, u, ctypes.POINTER(us)]
@@ -75,9 +76,12 @@ class NavMesh(object):
         if not self.h:
             raise RuntimeError("dtNavMesh.init 失败 status=0x%x" % st.value)
         bad = 0
+        self.walkable_radius = None     # dtMeshHeader.walkableRadius（数据偏移 64），取第一个分块的
         for b in tile_bytes:
             n = struct.unpack_from("<i", b, 4)[0] if b[:4] != b"VAND" else len(b)
             data = b[8:8 + n] if b[:4] != b"VAND" else b
+            if self.walkable_radius is None and len(data) >= 68:
+                self.walkable_radius = struct.unpack_from("<f", data, 64)[0]
             s = lib().dn_add_tile(self.h, data, len(data))
             if s & 0x80000000:                         # DT_FAILURE
                 bad += 1
@@ -123,8 +127,9 @@ class NavMesh(object):
         return [refs[k] for k in range(max(0, n))]
 
     def poly_height(self, ref, pos):
+        # NeoX 内置 Detour 的写法（逐细节三角形、含边界），见 detour_c.cpp dn_poly_height_legacy
         h = ctypes.c_float(0)
-        return h.value + self.offset[1] if lib().dn_poly_height(self.h, ref, self._in(pos), ctypes.byref(h)) else None
+        return h.value + self.offset[1] if lib().dn_poly_height_legacy(self.h, ref, self._in(pos), ctypes.byref(h)) else None
 
     def column_heights(self, pos, half):
         """(x, z) 竖直方向上所有多边形的高度（升序）。"""
@@ -211,14 +216,24 @@ class scene_detour(object):
 
     # ---- 查询 ----
     def get_height(self, name, x, y, z):
-        """推断：按网格的搜索范围找最近多边形，取 (x,z) 处该多边形高度；点不在多边形投影内时取最近点高度。"""
+        """引擎实现（libclient 热更版反汇编 0x8eb5780，SKILL §9.14）：
+        findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×缩放, 4000, ext.z×缩放)) → getPolyHeight(ref, (x,y,z))，失败返回 None。
+        ext 是 set_detour_extension 设的值（游戏设 (1, extent_y, 1)），缩放 = mesh[0x1138]，构造默认 1.0、MSET 载入不改。
+        竖直半尺寸写死 4000；NeoX 内置的是 v1.6 之前的 Detour（无 dtNavMesh::getPolyHeight），点不在多边形投影内时 getPolyHeight 失败 → None。
+        （旧版推断"投影外取最近点高度"已去掉。）"""
         QUERIES["get_height"] += 1
         m = self._mesh(name)
         if m is None: return None
-        p, ref = m.nearest((x, y, z))
-        if p is None: return None
-        h = m.poly_height(ref, (x, y, z))
-        return h if h is not None else p.y
+        p, ref = m.nearest((x, y, z), (m.ext[0], 4000.0, m.ext[2]))
+        h = m.poly_height(ref, (x, y, z)) if p is not None else None
+        if h is None and self.meshes.get(name) is None and m.walkable_radius:   # 载入失败的网格登记为 None
+            # 近似（仅回退查询）：要查的普通/tilecache 网格缺，落到了 AI 网格。两者只差墙边收缩距离（AI 收 walkable_radius=6，
+            # 普通网格更少），所以真网格边界最多比 AI 网格往外多 walkable_radius → 在这个水平范围内吸附到 AI 网格最近点取高度。
+            p, ref = m.nearest((x, y, z), (m.walkable_radius, 4000.0, m.walkable_radius))
+            if p is not None:
+                FALLBACK["get_height 回退网格边缘吸附(近似)"] += 1
+                h = p.y
+        return h
 
     def get_vertical_height(self, name, x, y, z, floor_flag=True, *a):
         """推断（调用处只在 UGC/跳跃副本分支）：竖直方向所有多边形高度中，floor_flag 取 y 以下最高的，否则取离 y 最近的。"""
