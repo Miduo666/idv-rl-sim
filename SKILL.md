@@ -1227,6 +1227,12 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
   - 杰克 `card_knife`：底牌 + 挽留、破坏欲 3、狂暴 1、愤怒 1 → 14 项；辅助特质 7 闪现
   - 验证（`run1v4.py 6 450 --server-ai`、会话 scratchpad `loadout_check.py`）：天赋全部展开进 `passive_skill_dct`；杰克技能第 4 槽 701 → **(711, 712)**，`SupportSkillAdapter.skill_id = 711`；
     tick 异常 0；`t_determinism.py 300 0` 逐帧一致；0.5 → 0.4 倍速。
+  - **★ 整局暴露的闪现问题（已修）**：第一局（`seed0_genius.jsonl`，20 分钟上限）杰克 65.6 秒起整局不动 → 0 杀、两人开门逃生。
+    根因：杰克 AI 第一次放闪现，`VSkillSpellFlash.cast` → `VSkillChannel.cast` → `CastingIndicator.update` → `DirectionSelector.process` 解包失败
+    （方向取自技能摇杆 `GK.input.get_joystick_skill_dir()` 和相机），技能卡在施法中途。`VSkillChannel.init_casting_indicator` 只给本机玩家
+    （`is_self`）建施法指示器，其它单位为 None、cast 时跳过；模拟器里"自己"是人机杰克 → 走进了玩家 UI 路径。
+    修法：`sim1v4._ai_self_no_casting_indicator` 包 `init_casting_indicator`，`WorldSim1v4.self_is_ai()` 为真时置 None（计数）。
+    复跑：65.5 秒放出闪现（冷却 150 开始走），之后继续追击；`t_determinism.py 300 0` 一致。
   - 版本差：apk 原包配表里天赋 28（劳有所得）→ 被动 **122**；`idv-replay-genius/genius-table.md` 记的 400 是 9-22 热更版。模拟器跑原包脚本，按 122。
 - **真值来源**：录像开局快照每个角色实体都有 `genius_id_lvs`、`support_skill_id`、`is_bot`（现有录像 `6ade93e2…` 5 人全是真人，用不上）。需要一局**有人机参与**的录像（例如自定义房噩梦、用户当求生者，对手杰克人机 + 3 个求生者人机），拉回后读快照即可，不用逆服务端。**待用户决定。**
 

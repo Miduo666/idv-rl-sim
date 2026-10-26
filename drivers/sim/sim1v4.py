@@ -191,7 +191,25 @@ def _with_server_butcher_speed(fn):
     return wrapped
 
 
+def _ai_self_no_casting_indicator(orig):
+    """VSkillChannel.init_casting_indicator 只给本机玩家（unit.is_self / 本机控制的信徒）建施法指示器，其它单位置 None，
+    cast 时 casting_indicator 为 None 就跳过。指示器的方向来自技能摇杆和相机（DirectionSelector: GK.input.get_joystick_skill_dir /
+    g_cam_ctrl.cam）。模拟器里"自己"是行为树控制的人机（客户端必须有一个本机单位），真房间里人机不是本机单位
+    → 按非本机规则置 None。缺了它杰克 AI 放闪现在 DirectionSelector.process 解包失败、技能卡在施法中途、之后整局不动（§9.19）。"""
+    def init_casting_indicator(self):
+        orig(self)
+        room = getattr(self.unit, "room", None)
+        if self.casting_indicator is not None and getattr(room, "self_is_ai", lambda: False)():
+            self.casting_indicator = None
+            SHIM_STATS["人机本机单位不建施法指示器"] += 1
+    init_casting_indicator._sim_shim = True
+    return init_casting_indicator
+
+
 def install_unit_shims():
+    from common_cs.skills.VSkillChannel import VSkillChannel
+    if not getattr(VSkillChannel.init_casting_indicator, "_sim_shim", False):
+        VSkillChannel.init_casting_indicator = _ai_self_no_casting_indicator(VSkillChannel.init_casting_indicator)
     from common_cs.ai.AICivilian import AICivilian
     if not getattr(AICivilian.qaai_black_cal_hiding, "_sim_shim", False):
         AICivilian.qaai_black_cal_hiding = _with_server_butcher_speed(AICivilian.qaai_black_cal_hiding)
@@ -335,6 +353,11 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
     def _init_client_battle_info(self, info_dict):
         super(WorldSim1v4, self)._init_client_battle_info(info_dict)
         self.game_type = ComuKeys.GAME_TYPE.KILL
+
+    @classmethod
+    def self_is_ai(cls):
+        """"自己"(GK.g_unit) 是否由行为树控制（建"自己"时 roles 还没登记，按编成判断）。"""
+        return bool((cls.BUTCHER if cls.SELF_ROLE == "butcher" else cls.CIVILIANS[0])[1])
 
     def _apply_loadout(self, unit_info):
         """建单位参数里补服务端下发的 genius_id_lvs / support_skill_id（§9.19）。"""
