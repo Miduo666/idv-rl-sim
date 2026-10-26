@@ -56,3 +56,4 @@ for u in core.characters():
 if BT_ERRS:
     print("== 行为树异常:", [(k, n) for k, n in BT_ERRS.most_common(8)])
 core.report()
+print("== 服务端垫片统计:", dict(sim1v4.SHIM_STATS))

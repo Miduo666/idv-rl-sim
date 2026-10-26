@@ -3,10 +3,64 @@
     core = SimCore(); import sim1v4; w = sim1v4.make_1v4(core, scene_id=1); core.run(300)
 （本模块顶层就 import 游戏脚本，必须在 SimCore() 设好 sys.path/打桩之后再导入）
 人机 AI(qaai_*) 原本跑在服务端房间里；服务端房间/单位的少量方法客户端脚本里没有，按调用处语义补在 ServerRoomShim。"""
-import random
+import math, random, collections
 import game_kernel as GK
+import math3d
 from common_cs import ComuKeys
+from common_cs.h55_utils.utils_math import UtilsMath
 from worlds.WorldBattleClientBase import WorldBattleClientBase
+
+SHIM_STATS = collections.Counter()
+
+
+class ServerGeneratorShim(object):
+    """服务端密码机方法：AI 修机站位（SKILL §9.11）。客户端脚本里只有调用、没有定义：
+    FoolSystem.set_position_gen 移机后 `gen.ai_fix_pos.clear(); gen.init_ai_fix_angle(); gen.precompute_pos_for_ai()`；
+    AICommonTrigger._init_gen_fixdir 用 len(gen.ai_fix_angle) 当可修方位数；PatrolPolicy.patrol_move 用 gen.ai_fix_pos[gen.ai_fix_angle[0]] 当巡逻点。
+    - 方位键：fix_pos 的键是 0/90/180/270（iLogicGenerator.init_logic_components）；给 AI 的站位 iLogicGenerator.get_pos_for_ai
+      普通机只遍历 (90, 180, 270)、赛马场中心机遍历四个 —— 照此取。录像旁证：真人 12 次修机开始的 range_key 全是 90/180/270（§9.11）。
+    - 站位 = 机位置 + 方位向量 × inter_dis × 0.5（get_pos_for_ai 原式；inter_dis = DM.ui_inter[FIX]，军工厂 30）。
+    - 推断：站位点在导航上取不到高度的方位剔除（check_inter_pos_valid 第一步就是 get_detour_height，取不到判无效），计入 SHIM_STATS。"""
+
+    def _ai_slot_keys(self):
+        return (0, 90, 180, 270) if getattr(self, "racetrack_center_flag", False) else (90, 180, 270)
+
+    def _ai_slot_pos(self, key, inter_dis):
+        if getattr(self, "racetrack_center_flag", False):
+            return self.get_racetrack_center_logic_pos(key, inter_dis * 0.5)
+        dir2 = self.get_direction()
+        if key == 90:
+            dir2 = UtilsMath.get_anticlockwise_angle_vector2(-math.pi / 2, dir2)
+        elif key == 180:
+            dir2 = UtilsMath.get_anticlockwise_angle_vector2(math.pi, dir2)
+        elif key == 270:
+            dir2 = UtilsMath.get_anticlockwise_angle_vector2(math.pi / 2, dir2)
+        return self.get_position3() + math3d.vector(dir2.x, 0, dir2.y) * inter_dis * 0.5
+
+    def init_ai_fix_angle(self):
+        self.ai_fix_angle = list(self._ai_slot_keys())
+
+    def precompute_pos_for_ai(self):
+        inter_dis = GK.DM.ui_inter[ComuKeys.BATTLE_INTER_UI_INDEX.FIX]["inter_dis"]
+        if getattr(self, "ai_fix_pos", None) is None:
+            self.ai_fix_pos = {}
+        keep = []
+        for key in self.ai_fix_angle:
+            p = self._ai_slot_pos(key, inter_dis)
+            if self.room.nav_mgr.get_detour_height(math3d.vector(p), ComuKeys.NAV_MESH_AI) is None:
+                SHIM_STATS["修机站位不在导航上，剔除"] += 1
+                continue
+            self.ai_fix_pos[key] = p
+            keep.append(key)
+        self.ai_fix_angle = keep
+        SHIM_STATS["密码机站位预计算"] += 1
+
+
+def install_unit_shims():
+    from ClientUnits.GeneratorUnit import GeneratorUnit
+    for name in ("_ai_slot_keys", "_ai_slot_pos", "init_ai_fix_angle", "precompute_pos_for_ai"):
+        if not hasattr(GeneratorUnit, name):
+            setattr(GeneratorUnit, name, getattr(ServerGeneratorShim, name))
 
 
 class ServerRoomShim(object):
@@ -67,6 +121,14 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
                 u.punish_start_timestamp = 0
 
     def attach_ais(self):
+        """开局后给配置了行为树的角色挂 AI 之前，先做服务端开局时的密码机修机站位预计算（ServerGeneratorShim）。"""
+        for g in self.unit_mgr.get_generator_units():
+            g.ai_fix_pos = {}
+            g.init_ai_fix_angle()
+            g.precompute_pos_for_ai()
+        self._attach_bt_ais()
+
+    def _attach_bt_ais(self):
         """开局后给配置了行为树的角色挂 AI。按服务端做法：监管走 QAAIFactory，求生者走 change_ai(AICivilian)。"""
         from common_cs.ai.qaai_butcher.QAAIFactory import QAAIFactory
         for uid, (role, pid, bt) in self.roles.items():
@@ -89,6 +151,7 @@ def utils_fixed_pos(pos_rot, scene_id):
 
 def make_1v4(core, scene_id=1, world_cls=WorldSim1v4):
     import world as _world
+    install_unit_shims()
     n = _world.register_scene_models(GK.DM.pos_info.get(scene_id, {}))
     core._log("[1v4] 场景具名模型 %d 个" % n)
     self_pid = world_cls.BUTCHER[0] if world_cls.SELF_ROLE == "butcher" else world_cls.CIVILIANS[0][0]
