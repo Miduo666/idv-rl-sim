@@ -1216,6 +1216,18 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
 - 天赋表：`DM.butcher_genius_data` / `civilian_genius_data` = `{天赋id: {等级: {passive_skill_id_lv, pre_genius, genius_point, …}}}`（各 40 个）。
 - **`player_ai_conf[pid].ai_genius_id` 指向的方案表不在客户端**：取值 监管 1/4/5/6/7/8/11（杰克 11，`con_lose` 12）、求生者 2（医生/律师/园丁等）/3（空军/佣兵等）。客户端 `recommend_genius` 只有 1–6（1–4 求生者、5–6 监管），编号空间对不上；`pid_genius`/`single_practice_genius_recommend` 也不是。客户端没有任何代码读 `ai_genius_id`，人机天赋由服务端放进建单位参数下发（`UIBattleState._form_bot_video_genius_args` 直接读 `unit.genius_id_lv_lst`）。
 - **辅助特质**同理：模拟器没传 `support_skill_id` → 默认 `[1]` → 杰克技能第 4 槽 = 701。`SupportSkillAdapter` 只区分 711 闪现 / 722 金身（其它都走闪现策略）。人机实际带哪个，也是服务端数据。
+- **★ 已有人机真值（2026-09-23 注入探针，`逆向存档\2026.0917_b6f53566\captures\cmd\173539_ingame.txt`，训练房 `WorldBattleTrain`，用户当监管，4 个人机求生者，pid 未记录）**：
+  人机 1001/1002/1003 的 `genius_id_lv_lst`（12 条、100 点）**= `recommend_genius[2]`（博命1）按列表顺序截到 100 点，逐项完全一致**（末项 `(3,3)` 被截成 `(3,1)`）。
+  → 推断规则：`ai_genius_id` = `recommend_genius` 的 id（求生者 2/3 正好落在 role=2 的 1–4 里），按难度给点数预算 `global_data_ai.ai_genius_lvs = (20, 60, 100, 130)` 截断。每级都是 5 点，推荐方案总计 120 点（130 预算 = 全带）。
+  反例/缺口：人机 1000（终端 16/32）比 `recommend_genius[1]` 截 100 点多了 (34,1)、少了 (3,1)，**不完全符合**；监管 `ai_genius_id` 1/4/7/8/11/12 在 `recommend_genius`（只有 1–6）里找不到，**杰克的 11 仍然未知**；噩梦用哪一档预算未证实。人机求生者 `support_skill_id=[1]`。
+- **★ 已接入（2026-10-27，用户指定配装，双方都 130 点）**：`sim1v4.WorldSim1v4.LOADOUT`（pid → 方案, 辅助特质）+ `CIVILIAN_GENIUS` / `BUTCHER_GENIUS`（只写点名项）+ `genius_loadout()`（按配表 `pre_genius` 补齐前置，建单位时校验正好 130 点，否则抛错）。
+  注入点：`_init_units` 期间包 `unit_mgr.create_add_unit_in_client`（"自己"和 `add_units_in_scene` 两条路径都经它），往 `unit_info` 补 `genius_id_lvs` / `support_skill_id`，之后交给游戏 `init_passive_skills`。
+  - 医生/律师/园丁 `double_heart`：膝跳反射 + 回光返照两条主线、绝处逢生、巨力 3、结伴效应、宣泄效应、救世主情结 1 → 16 项
+  - 空军 `save_heart`：化险为夷 + 回光返照、避难所 3、绝处逢生、宣泄效应、巨力 2 → 15 项（救世主情结 3 级是搏命线前置）
+  - 杰克 `card_knife`：底牌 + 挽留、破坏欲 3、狂暴 1、愤怒 1 → 14 项；辅助特质 7 闪现
+  - 验证（`run1v4.py 6 450 --server-ai`、会话 scratchpad `loadout_check.py`）：天赋全部展开进 `passive_skill_dct`；杰克技能第 4 槽 701 → **(711, 712)**，`SupportSkillAdapter.skill_id = 711`；
+    tick 异常 0；`t_determinism.py 300 0` 逐帧一致；0.5 → 0.4 倍速。
+  - 版本差：apk 原包配表里天赋 28（劳有所得）→ 被动 **122**；`idv-replay-genius/genius-table.md` 记的 400 是 9-22 热更版。模拟器跑原包脚本，按 122。
 - **真值来源**：录像开局快照每个角色实体都有 `genius_id_lvs`、`support_skill_id`、`is_bot`（现有录像 `6ade93e2…` 5 人全是真人，用不上）。需要一局**有人机参与**的录像（例如自定义房噩梦、用户当求生者，对手杰克人机 + 3 个求生者人机），拉回后读快照即可，不用逆服务端。**待用户决定。**
 
 **2. 隔墙对峙（§9.16.7 问题 3）：定性为游戏 AI 自身缺陷，不是模拟误差**

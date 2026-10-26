@@ -278,6 +278,37 @@ BUTCHER_TREE_CONTROLLER = {
 }
 
 
+# 人机天赋 / 辅助特质（§9.19）。服务端按 player_ai_conf[pid].ai_genius_id 查一张客户端没有的方案表，把结果放进建单位参数
+# unit_info['genius_id_lvs'] / ['support_skill_id'] 下发；客户端 BattlePlayerUnit.init_passive_skills 再按天赋表展开成被动。
+# 方案表拿不到 → 用户 2026-10-27 指定（双方都 130 点）：这里只写点名的天赋 {id: 等级}，前置按配表 pre_genius 补齐。
+GENIUS_POINTS = 130
+CIVILIAN_GENIUS = {
+    # 双弹(膝跳反射 32) + 大心脏(回光返照 16) 两条主线、绝处逢生 26、巨力 31×3、结伴效应 34、宣泄效应 18、救世主情结 19
+    "double_heart": {32: 1, 16: 1, 26: 1, 31: 3, 34: 1, 18: 1, 19: 1},
+    # 化险为夷 24 + 回光返照 16、避难所 22×3、绝处逢生 26、宣泄效应 18、巨力 31×2
+    "save_heart": {24: 1, 16: 1, 22: 3, 26: 1, 18: 1, 31: 2},
+}
+BUTCHER_GENIUS = {
+    # 底牌 16 + 挽留(一刀) 24、破坏欲 5×3、狂暴 6×1、愤怒 7×1
+    "card_knife": {16: 1, 24: 1, 5: 3, 6: 1, 7: 1},
+}
+SUPPORT_SKILL_FLASH = 7            # 辅助特质 7 = 闪现（杰克技能 711；AI 的 SupportSkillAdapter 专门处理 711/722）
+
+
+def genius_loadout(table, want):
+    """点名天赋 {id: 等级} → 补齐前置后的 [[id, 等级], ...]（按 id 排序）与总点数。table = DM.civilian/butcher_genius_data。"""
+    need = dict(want)
+    stack = list(want)
+    while stack:
+        row = table[stack.pop()]
+        for p, plv in (row[min(row.keys())].get("pre_genius") or ()):
+            if need.get(p, 0) < plv:
+                need[p] = plv
+                stack.append(p)
+    points = sum(table[g][l]["genius_point"] for g, lv in need.items() for l in range(1, lv + 1))
+    return [[g, need[g]] for g in sorted(need)], points
+
+
 class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
     # (pid, 行为树)；行为树为 None = 不挂 AI（留给外部控制）
     # 噩梦难度的人机 = pydata.player_ai_conf[pid].nightmare_ai（§9.16）：杰克 qaai_butcher_jack，求生者 qaai_civilian_rank7。
@@ -286,6 +317,10 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
                  (17, "qaai_civilian_rank7"), (32, "qaai_civilian_rank7"))     # 园丁、空军
     # 魔术师(21) 暂不用：LSkillCivilianMagicSubstitute 只在 SERVER_MODE 下导入 LogManager，建单位时 NameError（§9.16）
     SELF_ROLE = "butcher"                                       # 客户端必须有一个"自己"(GK.g_unit)
+    # pid -> (天赋方案名, 辅助特质 id 或 None)；没列的角色不带天赋（§9.19）
+    LOADOUT = {30: ("card_knife", SUPPORT_SKILL_FLASH),
+               14: ("double_heart", None), 15: ("double_heart", None), 17: ("double_heart", None),
+               32: ("save_heart", None)}
 
     def __init__(self):
         super(WorldSim1v4, self).__init__()
@@ -301,7 +336,39 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
         super(WorldSim1v4, self)._init_client_battle_info(info_dict)
         self.game_type = ComuKeys.GAME_TYPE.KILL
 
+    def _apply_loadout(self, unit_info):
+        """建单位参数里补服务端下发的 genius_id_lvs / support_skill_id（§9.19）。"""
+        spec = self.LOADOUT.get(unit_info.get("pid"))
+        if not spec:
+            return
+        plan, support = spec
+        butcher = unit_info.get("unit_type") == ComuKeys.UNIT_TYPE_CONF.BUTCHER
+        table = GK.DM.butcher_genius_data if butcher else GK.DM.civilian_genius_data
+        lst, points = genius_loadout(table, (BUTCHER_GENIUS if butcher else CIVILIAN_GENIUS)[plan])
+        if points != GENIUS_POINTS:
+            raise ValueError("天赋方案 %s 补齐前置后是 %d 点，不是 %d" % (plan, points, GENIUS_POINTS))
+        unit_info["genius_id_lvs"] = lst
+        SHIM_STATS["人机天赋 %s（%d 项 %d 点）" % (plan, len(lst), points)] += 1
+        if support is not None:
+            unit_info["support_skill_id"] = [support]
+            SHIM_STATS["人机辅助特质 %d" % support] += 1
+
     def _init_units(self, info_dict):
+        # 两条建单位路径（基类建"自己"、add_units_in_scene 建其余人）都经 unit_mgr.create_add_unit_in_client(类型, unit_info, self_uid)，
+        # 服务端的人机配装就在这份 unit_info 里 → 建单位期间包一层补上
+        um = self.unit_mgr
+        orig = um.create_add_unit_in_client
+
+        def create_with_loadout(unit_type, unit_info, *a, **k):
+            self._apply_loadout(unit_info)
+            return orig(unit_type, unit_info, *a, **k)
+        um.create_add_unit_in_client = create_with_loadout
+        try:
+            self._init_units_impl(info_dict)
+        finally:
+            del um.create_add_unit_in_client
+
+    def _init_units_impl(self, info_dict):
         # 基类建"自己"（info_dict.player_id）和场景交互物
         super(WorldSim1v4, self)._init_units(info_dict)
         me = GK.g_unit
