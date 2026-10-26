@@ -23,7 +23,8 @@
 4. 2026-10-15 那次只读 /proc 被弹"检测到修改客户端"，**在 Python 层和 libsec-lib 里都找不到对应机制**
    —— 支持"未必是只读 /proc 本身触发"的判断。彻底坐实需逆 175MB 的 `libclient.so`（见 §7 待办）。
 5. **模拟器 + 强化学习主线（2026-10-24 起）**：字节码还原后在标准 CPython 3.11 无引擎跑游戏自带的本地服务端对局（§9）。
-   碰撞层已完成、AI 孤岛机制已完成，剩密码机修机站位（服务端算法缺）和导航层两处缺口 → **从 §9.6 接着做**。
+   碰撞、AI 孤岛、导航（官方 Detour）、修机站位、主循环都已完成，**5 个人机角色已能自主移动**（求生者修机/躲藏、监管追人）；
+   当前硬阻塞是交互动画的根运动位移数据（方案待用户选）→ **从 §9.6.0 / §9.6.3 待办清单接着做**。
 
 ---
 
@@ -565,7 +566,8 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
   **关 zip 落盘后**才做 E(接口清单 api_report.json) 和 D(若在对局：`hit_by_ray_new_with_scn_col` / `hit_by_ray_new` 竖直 96×96 网格 + 随机射线，150 秒，raytruth.jsonl)。
 - 产物：`res.zip`(STORED) + `manifest.jsonl`(路径/大小/MD5/来源) + `miss.jsonl` + `nav_report.json` + `log.txt` + `raytruth*.json*` + `api_report.json`。
 - 本地干跑：`drivers/sim/test_resdump.py`（真实配表 + 假 C_file），各阶段通过。
-- 动画根运动**不需要**注入：服务端模式 `AnimDataComponent.READ_FROM_PYDATA`，数据在 `pydata.anim.gg*`（脚本包里）。
+- ~~动画根运动不需要注入：服务端模式 `AnimDataComponent.READ_FROM_PYDATA`，数据在 `pydata.anim.gg*`（脚本包里）。~~
+  **2026-10-26 更正：错。** 客户端脚本包里没有 `pydata/anim`；`DataManager.get_dis_anim_data_path` 自己写着"这个方法不该被调用"，`get_dis_anim_data_only` 客户端没有定义——那是服务端独有的导出数据（§9.12.3）。
 
 ### 9.5.4 ★ 导出结果（2026-10-25 01:54 跑，军工厂人机局）
 - 注入：`/data/qq.sh` = 007 工程 `libs/arm64-v8a/qq.sh`(10-18 构建, md5 `366a5eb8…`, 载荷区开头是 probe2 18970 字节)，
@@ -653,9 +655,14 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
   求生者 `punish_start_timestamp`、密码机 `ai_fix_angle`/`ai_fix_pos` + `init_ai_fix_angle()`/`precompute_pos_for_ai()`（修机站位，距离来源未找到）、
   `room.skada_mgr`。（原记"GlobalCarryScoreCal 用到的求生者恐惧值为 None"是误判，实为导航距离 None，见 §9.6.2。）
 
-### 9.6 现状与下一步（2026-10-25 收口，下个对话从这里接）
+### 9.6 现状与下一步（2026-10-26 收口，**下个对话从这里接**）
 
-#### 9.6.0 一句话现状
+#### 9.6.0 一句话现状（2026-10-26）
+**5 个人机角色都能在军工厂里自主移动：求生者去修机/躲藏，监管追人**（`run1v4.py 1 450 --server-ai`，0.7 倍速）。
+碰撞（§9.6.1）、服务端模式 AI 孤岛（§9.6.2）、导航（§9.10）、修机站位（§9.11）、主循环补全（§9.12）都已完成。
+**当前唯一的硬阻塞：交互动画（修机/翻窗/踩板/救人/挂椅）的根运动位移数据**——客户端脚本里没有，方案待用户选（§9.12.3）。待办清单见 §9.6.3。
+
+以下是 2026-10-25 的记录：
 - **碰撞层完成**：`.scn_col` 静态网格 + 板/窗/门/角色等动态体，射线、扫掠、静态测试、路径相交全部接上游戏的 `CollisionManager`，
   过滤语义、返回结构、三种形状（球/盒子/胶囊）的 size 约定都有调用处依据；军工厂 1v4 用到的形状全部登记（本机 `UNSUPPORTED` 为空）。
 - **AI 孤岛机制完成**：`run1v4.py 1 300 --server-ai` 下 178/179 个 AI 模块以服务端模式导入，求生者 `MathUtils` 异常消失，模拟 1.8 倍速。
@@ -728,7 +735,18 @@ col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, 
   → **Detour 导航层已是硬阻塞**（9.6.3-2）。角色仍原地不动。
 - **2026-10-26 导航层接上后**（§9.10）：`dis=None` 消失；唯一剩下的是密码机 `ai_fix_angle`（`AICommonTrigger._init_gen_fixdir` 每帧中断），角色仍不动。1.1 倍速。
 
-#### 9.6.3 缺口清单（按阻塞程度）
+#### 9.6.3 待办清单（2026-10-26，按优先级）
+1. **【待用户决策】交互动画根运动位移**（硬阻塞，§9.12.3）：三个方案（置零+录像逐步补 / 解析引擎角色动画资源 / 只置零），用户还没选。
+2. **求生者躲藏目标**：`AICivilian.qaai_get_current_best_hiding_target`（3775 行）`None / float`，450 帧里 82 次，来源未查（§9.12.4）。
+3. **性能**：0.7 倍速（450 帧墙钟约 23 秒）；导航查询每帧上百次（`get_path`/`get_height`），碰撞射线每帧十几次。先 profile 再优化（缓存寻路、减少 tick）。
+4. **找回普通导航与 tilecache**（还原度，§9.10）：设备场景包 `res_pull/scene_pkg/` 里有 222 个 MSET / 11 个 `TEST`，按分块世界包围盒配对出军工厂那份；`TEST` 压缩层格式要认；之后接 DetourTileCache（动态障碍）。
+5. **AI 打完一局** → 跑多局统计（胜率、时长、修机曲线）作模拟器正确性检查与 RL baseline（§9.6.4）。
+6. 遗留小项：`GK.LM`（1 个 AI 模块导入失败）；路径与碰撞网格 ~7% 擦墙（主厂房/地下室，§9.10）；碰撞近似项（盒子连续扫掠等，§9.6.1）；
+   `git` 历史提交 `9746ae7` 里误带了 14 个 pseudo 导出笔记（已从仓库移除、加忽略规则；要不要改写历史待用户定）。
+
+**测试要短**（用户偏好）：1v4 用 300~450 帧（约 15~25 秒墙钟），超过 1 分钟先说。
+
+以下是 2026-10-25 的旧清单（已处理项划掉）：
 1. ~~**`GeneratorUnit.ai_fix_angle` / `ai_fix_pos`**~~ —— **2026-10-26 已按共用层 `get_pos_for_ai` 重建（§9.11）**，求生者已能移动。原记录：
    - `iLogicGenerator.init_logic_components` 置 `self.ai_fix_pos = {}`（字典）；`ai_fix_angle` 是序列，`_init_gen_fixdir` 取 `len(gen.ai_fix_angle)` 当该机可修方位数；
      `PatrolPolicy.patrol_move` 用 `gen.ai_fix_pos[gen.ai_fix_angle[0]]` 当巡逻点 → `ai_fix_angle` 的元素是 `ai_fix_pos` 的键、值是位置。
@@ -749,7 +767,11 @@ python t_colworld.py                     # 碰撞内核自测（合成数据）
 python t_physx.py                        # 碰撞适配层自测（假 CollisionConst + 合成地图）
 python t_colconst.py                     # 打印真实 CollisionConst 常量 / UNIT_TYPE_CONF 编号名
 python colcheck.py ..\..\res_pull\resdump_1025_015456\res_recovered.zip scene/scene_battle/ordnance_factory1/nav/ordnance_factory1.scn_col scene/scene_battle/ordnance_factory1/nav/ordnance_factory_test1.nav
-python run1v4.py 1 300 [--server-ai]     # 1v4 对局；末尾打印碰撞查询/命中/未登记形状/调用样本
+python natives\detour_c\build.py         # 编官方 Detour（新机器/云端先跑一次）
+python t_detour.py                       # 导航层自测（真实军工厂 AI 导航）
+python run1v4.py 1 450 --server-ai       # 1v4 对局（约 20 秒）；末尾打印碰撞/导航统计、服务端垫片统计、调用样本
+python replay_scan.py ..\..\res_pull\replays\<guuid> "<RPC 名正则>" 3    # 录像事件流概览（需 PYTHONPATH=逆向存档\_scripts）
+python fixslot_from_replay.py ..\..\res_pull\replays\<guuid>          # 录像里的修机方位键与站位对照
 python usage.py "<调用名正则>" "" 4 20 | Out-File -Encoding utf8 x.txt   # 查调用处用法（正则里最后一个标识符用来预筛 idx）
 python pseudo.py <std_pyc 相对路径> "<qualname 正则>" | Out-File -Encoding utf8 x.txt
 ```
@@ -815,11 +837,49 @@ tilecache 导航 `…/ordnance_factory1_dynamic.nav` + `…_dynamic_cache.tileca
 **同轮补的其它缺口**：`room.skada_mgr`（`SkadaMgrShim`：`civilian_action_score_recored`/`butcher_action_count` 形状 `{uid: {str(行为): 次数}}`，AI 只读 CURE/CURE_HANG/HOOK_KILL；`add_civilian_score` 按次数+1 是推断；其余方法空操作记名）、
 `unit.sync_pos_dir`（服务端网络同步，本地空操作）、`math3d.euler_to_rotation`（只有纯偏航用例有依据）、`matrix.mulvec3x3`（= 3×3 旋转部分乘向量）。
 
-**现状（`run1v4.py 1 1800 --server-ai`，60 秒模拟，1.2 倍速）**：tick 异常 0、被吞异常 0；**4 个求生者走了几百到上千单位**，监管行为树每帧在跑但**原地不动**（原因未查）。
+**现状（`run1v4.py 1 1800 --server-ai`，60 秒模拟，1.2 倍速）**：tick 异常 0、被吞异常 0；**4 个求生者走了几百到上千单位**，监管行为树每帧在跑但**原地不动**（→ §9.12.1 已解）。
 求生者走到交互点后先后停住：进入交互根运动时 `AnimDataComponent.get_root_bone_diff_offset` 两个 None 相减 —— `AnimDataComponent.__init__` 在 `core.is_client() or core.is_local_server()` 时
-`read_mode = READ_FROM_ROOT_MOTION`（读引擎动画，模拟器没有），纯服务端才 `READ_FROM_PYDATA`（§9.5.3：数据在脚本包 `pydata.anim.gg*`）。
+`read_mode = READ_FROM_ROOT_MOTION`（读引擎动画，模拟器没有），纯服务端才 `READ_FROM_PYDATA`——**但客户端里没有 pydata.anim 数据（§9.12.3）**。
 
-**下一步**：① 让 `AnimDataComponent` 走服务端的 `READ_FROM_PYDATA`（人机 AI 本来就是服务端视角），确认 `pydata.anim` 能读出根骨骼偏移；② 查监管为什么不动；③ 能打完一局后跑多局统计。
+~~下一步：① 让 AnimDataComponent 走服务端的 READ_FROM_PYDATA；② 查监管为什么不动；③ 能打完一局后跑多局统计。~~ → ② 已解（§9.12.1）；① 走不通，改为待决策（§9.12.3）。
+
+### 9.12 ★ 主循环补全 → 监管动起来；根运动数据调查（2026-10-26）
+
+#### 9.12.1 监管不动的原因：模拟器漏了两处生命周期（已修，`simcore.py`）
+- **`world.init()` 从没调过**。真机 `WorldManager.change_to_world`：`cls()` → **`world.init()`** → `set_current_world` → `set_info(info)` → 异步 `init_scene(info_dict)`。
+  `WorldBase.init` 按 `world_type` 置 `is_city/is_hall/is_preload/is_battle_server/is_battle_client/is_battle`，并调 `unit_mgr.init()`、`event_mgr.init()`。
+  漏调时 **`is_battle_client=False`**（`NOVICE_BATTLE` 本该为 True，本地服务端、`init_combat_core` 都读它），`UnitManager.move_relate_unit_getter` 不存在。
+- **主循环 `WorldManager.release_logic` 的每帧步骤**：`cur_world.tick()` 之后还有 `GK.unit_mgr.move_relate_handle()`、`cur_world.tick_unit_del_logic()`（其余是 UI/声音/网络/相机）。
+  `move_relate_handle` 每帧把单位的 `move_flag` 复位；`MoveUnit.tick` 第一句 `if self.move_flag: return`，不复位时"自己"(`MyButcherUnit`) 只推进一帧。
+  监管的移动指令 `iCommonButcher.start_move_to_cs` 一直是成功的（走到 1066 行返回 True，`whole_path` 已设），卡在每帧推进。
+  ⚠ 求生者是 `ClientNPCCivilianUnit`，走自己的 `move_tick_cs`（不受 `move_flag` 影响），所以先动起来了。
+- `GK.unit_mgr` 真机由切换世界时赋值，模拟器在 `make_world` 里设 `GK.unit_mgr = w.unit_mgr`。
+- `GK.g_event_dispatcher` 保持桩：战斗相关代码里经它派发的只有城镇/烟花/家具/小游戏的 UI 事件（203 处引用，119 处在 `ui/`）。
+- 修后：监管从 (1760, 938) 追到 (1238.6, 809.5)（= 140 号求生者位置）；移动中的 `sweep_test` 开始被调用（450 帧 356 次）。
+
+#### 9.12.2 本轮修的其它点
+- `math3d.matrix.mulvec3x3` = 只乘 3×3 旋转部分（`RootMotionClassicComponent._local_2_world_offset`）。
+- `natives/world.py`：`model.position/rotation_matrix` 取值返回副本（NeoX 语义；之前返回内部对象，调用方 `p.y += h` 把模型改了 → 角色 Y 每帧上涨）。
+
+#### 9.12.3 ★ 交互根运动位移：数据只在引擎动画资源里（待用户决策）
+- `AnimDataComponent.__init__`：`core.is_client() or core.is_local_server()` → `READ_FROM_ROOT_MOTION`（读引擎模型动画），否则 `READ_FROM_PYDATA`。
+- `READ_FROM_PYDATA` 走 `DM.get_anim_length_dict(gis_id)`（客户端有，`DM.anim_length_data`，加密字典）、`DM.get_dis_anim_data_only(gis_id)`（**客户端没有**）、`DM.anim_height_data`（有）。
+  `DataManager.get_dis_anim_data_path` 返回 `pydata.anim.gg%s.dis_anim_offset` 并先抛"这个方法不该被调用"——**根骨骼位移曲线是服务端独有的导出数据**，客户端脚本包里没有 `pydata/anim` 目录。
+  `common_cs/role_anims/collected_anim_data.pyc` 只是每个 `gis_id` 的动画名清单（86 个），没有位移。
+- 失败点：进入交互状态 → `RootMotionClassicComponent.enable_root_motion` → `_get_root_bone_scale_match_target` → `AnimDataComponent.get_root_bone_diff_offset`（首帧与末帧根骨骼偏移相减，都是 None）。
+  角色的 `gis_id`：监管 1、求生者 2/3（`native_unit.gis_id`）。
+- **录像能提供的**：`process_root_motion_event` 的 `{op: 'sync_end_pos_dir', anim_name, end_pos, end_dir}`（还有 `sync_pos_dir`、`block`），一局 96 条、约 20 种动画：
+  `happy_sickle_attack_1_heavily`×28、`span2`×8、`smash`×7、`hang_envelope`×6、`destroy`×5、`behitch_hx`/`save2`/`save_by2`×4、`repair/repair_2/repair_3`×3、`slide4`/`happy_s_a_carry_heavily`×3、
+  `slide2`/`span`/`smash2`/`bind_up_left`×2、`span3`/`create_worm_hole`/`bind_up`×1。只有**结束位置**，没有中间轨迹；动画按角色 `gis_id` 不同。
+- **三个方案**（用户 2026-10-26 未选，先收口）：
+  1. 先置零 + 录像逐步补：没数据的动画位移按 0 并计数；录像里见过的用"起点→结束位置"的总位移按时长（`anim_length_data`）线性插值。录像越多覆盖越全；中间轨迹是近似，翻窗等在没数据前会丢位移。
+  2. 解析引擎角色动画资源：还原度最高；要从设备拉角色资源包、逆 NeoX 动画格式；资源按内容寻址、路径哈希没破（§9.8），按动画名找文件可能很难，工作量大且不确定。
+  3. 只置零：最快；修机/救人影响小，翻窗/踩板过不去会影响追击。
+- 实现位置（无论哪个方案）：`AnimDataComponent` 的 `_get_root_bone_offset_*_handler` / `get_root_bone_diff_offset`，在模拟器里换一个读法（不要改游戏判定逻辑）。
+
+#### 9.12.4 其它新暴露的问题（未查）
+- `AICivilian.qaai_get_current_best_hiding_target`（3775 行）`unsupported operand type(s) for /: 'NoneType' and 'float'`，450 帧里同一求生者 82 次。
+- 性能 0.7 倍速（主循环补全后从 1.2 降到 0.7，监管开始移动 + 碰撞扫掠增多）。
 
 ---
 
