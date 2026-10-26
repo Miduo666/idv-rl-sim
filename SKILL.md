@@ -665,7 +665,8 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 当前阻塞变成几个服务端成员缺口（`wood_oneway_tag`、`end_camera_rot_time_dict`、躲藏目标 None），见 §9.13 末尾与 §9.6.3。
 **2026-10-26 再更新：第一次打完一整局（§9.15，360 秒监管四杀，tick 异常 0），模拟可复现（§9.14）。** 下一步 = 多局统计校验。
 **性能（§9.18）**：噩梦编成约 0.5 倍速，profile 显示主要耗时在碰撞层（杰克 AI 的查询），原因与优化待核实；批量/并行运行放 3090（`ssh gpu`，未部署）。
-**2026-10-26 晚更新（§9.16）：之前用错了人机、难度没生效、所有 Buff 半初始化；已换成噩梦编成并补一批缺口，挨刀逃跑/救人都正常了。交接点 = §9.16.7。**
+**2026-10-26 晚更新（§9.16）：之前用错了人机、难度没生效、所有 Buff 半初始化；已换成噩梦编成并补一批缺口，挨刀逃跑/救人都正常了。**
+**2026-10-27（§9.19）：代码已提交；天赋缺口定位到"建单位没传 genius_id_lvs"、真值需人机录像；隔墙对峙定性为游戏 AI 缺陷；雾刃随普攻正常生成。交接点 = §9.19。**
 
 以下是 2026-10-25 的记录：
 - **碰撞层完成**：`.scn_col` 静态网格 + 板/窗/门/角色等动态体，射线、扫掠、静态测试、路径相交全部接上游戏的 `CollisionManager`，
@@ -1093,7 +1094,7 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
 - 核实办法（未做）：静态扫全部脚本里 `math3d.rotation(<4 个常量>)` 的写法，看单位元是写 `(1,0,0,0)` 还是 `(0,0,0,1)`；
   或在用到 `rotation.x/y/z/w` 分量的地方看语义。RAWANIMA 文件里的四元数是 xyzw（§9.13，按数据验证），那是文件格式，不代表 Python 构造参数顺序。
 
-#### 9.16.7 ★ 交接（2026-10-26 晚，**下个会话从这里接**）
+#### 9.16.7 交接（2026-10-26 晚；**2026-10-27 后续见 §9.19**，其中"passive_skill_dct 全 None""杰克没放雾刃"两条已更正）
 
 **当前代码状态**：分支 `claude/inspiring-maxwell-hdavsx`，**本轮改动全部未提交**（`sim1v4.py`、`simcore.py`、`simenv.py`、`natives/{detour,math3d,animdb}.py`、`run_full.py`/`record_game.py`/`t_determinism.py` 改默认场景；
 新文件 `analyze_game.py`（录像分析）、`scan_server_imports.py`（服务端顶层导入扫描）、`scan_try_imports.py`（"有 ImportError 兜底却被打桩"扫描）；另一会话的 `profile_sim.py` 也未提交）。
@@ -1204,6 +1205,33 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
   Linux 上重编 `natives/detour_c/build.py`、`natives/acl_c/build.py`；查路径里的 Windows 写法；`PYTHONHASHSEED=0` + 种子保证与本机结果一致（部署后用 `t_determinism` 对拍本机轨迹）。
 - 多进程并行脚本：**未写**（计划：每局一个子进程，`--jobs N`，子进程输出一行 JSON 汇总 = 结局/时长/机进度/异常数/轨迹哈希，父进程汇总胜负与时长分布）。
 
+### 9.19 ★ 天赋来源 / 隔墙对峙定性 / 雾刃核实（2026-10-27，**下个会话从这里接**）
+
+**进度**：§9.16.7 那批改动已提交（`ebddf9b`，提交前 `t_determinism.py 300 0` 逐帧一致）。§9.16.7 建议顺序：① 已做；② 天赋查清来源、**等真值**；③ 已定性；④ 剩一人不逃生 = 杰克没抓住、600 秒超时，用户说不严重、**跳过**；⑤ 多种子统计、⑥ 原生录像未做。
+
+**1. 天赋 / 被动 / 辅助特质（更正 §9.16.7 问题 1）**
+- **更正：`passive_skill_dct` 不是 None。** 探针 30 帧：角色自带特质（`DM.player[pid].passive_skill_id_lvs`，如医生 501/504、杰克 23）+ 求生者默认 `global_data_battle.civilian_default_skills = ((112,1),(1000,1))` 都已装进 `ability.passive_skill_dct`（监管没有默认项）。
+- 装配链（`BattlePlayerUnit.__init__` → `_init_hero_info` → `init_passive_skills` → `Ability.init_from_dict`）：
+  `genius_id_lv_lst = params['genius_id_lvs']`（`[[天赋id, 等级], …]`）→ 每项 `DM.get_genius_data_by_id_lv(unit_type, id, lv)['passive_skill_id_lv']` 追加进被动表。**模拟器建单位没传 `genius_id_lvs` → 天赋全空**，这是唯一缺的一层。
+- 天赋表：`DM.butcher_genius_data` / `civilian_genius_data` = `{天赋id: {等级: {passive_skill_id_lv, pre_genius, genius_point, …}}}`（各 40 个）。
+- **`player_ai_conf[pid].ai_genius_id` 指向的方案表不在客户端**：取值 监管 1/4/5/6/7/8/11（杰克 11，`con_lose` 12）、求生者 2（医生/律师/园丁等）/3（空军/佣兵等）。客户端 `recommend_genius` 只有 1–6（1–4 求生者、5–6 监管），编号空间对不上；`pid_genius`/`single_practice_genius_recommend` 也不是。客户端没有任何代码读 `ai_genius_id`，人机天赋由服务端放进建单位参数下发（`UIBattleState._form_bot_video_genius_args` 直接读 `unit.genius_id_lv_lst`）。
+- **辅助特质**同理：模拟器没传 `support_skill_id` → 默认 `[1]` → 杰克技能第 4 槽 = 701。`SupportSkillAdapter` 只区分 711 闪现 / 722 金身（其它都走闪现策略）。人机实际带哪个，也是服务端数据。
+- **真值来源**：录像开局快照每个角色实体都有 `genius_id_lvs`、`support_skill_id`、`is_bot`（现有录像 `6ade93e2…` 5 人全是真人，用不上）。需要一局**有人机参与**的录像（例如自定义房噩梦、用户当求生者，对手杰克人机 + 3 个求生者人机），拉回后读快照即可，不用逆服务端。**待用户决定。**
+
+**2. 隔墙对峙（§9.16.7 问题 3）：定性为游戏 AI 自身缺陷，不是模拟误差**
+- 时间窗 ≈215–287 秒，对象是杰克 ↔ c141（空军）。杰克在 (1546–1572, z≈1405)，空军在 (1530–1543, z≈1540)，直线约 140。杰克身前 z≈1419 有墙（射线离地 3/8/15/25 全命中）。
+- AI 导航（原生 ext (1,4,1)，**没用到端点吸附近似**）上绕墙左右两条路几乎等长（≈240）。逐帧（`standoff_flip.py`，会话 scratchpad）：杰克实际 x 方向与"当前最短路第一拐点在哪一边"915/918 一致；71 秒内最短路换边 150 次，严格周期约 0.93 秒；空军与杰克反向移动 688 对 155。
+  → 机制：杰克每次重新寻路取最短路、没有保持方向；求生者绕障朝远离监管一侧挪（从数据反推，`CirCle` 代码未逐行核）。两条等长路轮流变成最短，形成死循环，直到 288 秒 c140 靠近、杰克换目标才结束。
+- 未排除：真服务端 AI tick 频率若不是 30Hz，周期会变，但左右等长的对称性仍在。
+
+**3. 雾刃（更正"杰克一次雾刃都没放"）**
+- 游戏里雾刃**随普攻自动出手**（用户指出，代码核实）：`ItemJack.check_jack_energy_buff` 在能量满（`value ≥ max_value`）时把普攻技能的 `logic.nc_dct` 换成生成雾刃的配置；`LSkillBase.process_skill_ncreatures` 按 `{延迟ms: [(新生物id, 类型)]}` 定时生成，类型 1 = `AIRPOWER`。
+  杰克配置（`item_arg4/5`）：1201/1205 `is_full_check=True` → `{581: [(8,1)]}`；1211/1214 `is_full_check=False`（≥50% 能量分支）→ `{540: [(57,1)]}` / `{1100: [(57,1)]}`。能量上限 180、回复 10/秒，每次普攻清空。
+- **模拟器实测**：第 670 帧满能量出刀 → 第 688 帧（581ms 后）创建 `LAirPower`（`AirPowerFogHitNew`），无异常。录像 jsonl 只记动画名，所以看不到雾刃。
+- AI 的 `straight_cast_skill` / `across_wall_cast_skill` 不决定"放不放雾刃"，只在能量满时**选站位走过去、再对求生者挥普攻**（`base_module['attack']`）：直线要求 40–150 内弹道不撞墙（>100 还要 `is_straight_line`），隔墙要求 ≤70。对峙时距离 140、中间是实墙，两条都不触发，与上面的结论一致。
+- 未做：雾刃飞行/命中是否与真机一致（`AirPower.tick_trace_direction` 已补的数学函数见 §9.16 表）。
+
+**下一步（先跟用户确认）**：天赋 + 辅助特质真值（需要一局人机录像）→ 按快照传 `genius_id_lvs`/`support_skill_id`；多种子统计（3090 部署 + 并行脚本，§9.18.4）；原生录像（§9.17）。
 
 ## 8. 免责
 
