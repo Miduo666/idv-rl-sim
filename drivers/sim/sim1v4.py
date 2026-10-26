@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """标准 1v4 模拟对局：WorldBattleClientBase(本地服务端) + 5 个角色，可逐个挂人机行为树或留给外部控制。
-    core = SimCore(); import sim1v4; w = sim1v4.make_1v4(core, scene_id=1); core.run(300)
+    core = SimCore(); import sim1v4; w = sim1v4.make_1v4(core); core.run(300)     # 默认场景 6 = 正式对局军工厂
 （本模块顶层就 import 游戏脚本，必须在 SimCore() 设好 sys.path/打桩之后再导入）
 人机 AI(qaai_*) 原本跑在服务端房间里；服务端房间/单位的少量方法客户端脚本里没有，按调用处语义补在 ServerRoomShim。"""
 import math, random, collections
@@ -164,7 +164,37 @@ def _ability_has_skill_and_same_level(self, skill_id, level):
     return d.get(skill_id) == level
 
 
+def _wood_check_lawyer_span(self, uid, lawyer_map_span=False):
+    # 服务端窗方法：全部脚本只有 LStateCivilian.enter_state（SPAN，律师 pid 15 翻非墙窗）一处调用，返回值不用（语句调用）。
+    # 缺它时进翻窗状态做到一半抛 → SPAN 挂着永不退出 → 倒地后 CATCHED 状态检查不过，监管扛不起来、整局卡死（§9.16）。
+    # 实现不在客户端 → 空操作计数（推断是服务端记律师翻窗相关的统计/表现）。
+    SHIM_STATS["wood.check_lawyer_span_wood(律师翻窗,空操作)"] += 1
+
+
+def _with_server_butcher_speed(fn):
+    # 服务端单位的 .speed = 配表 move_speed（求生者 CivilianUnit.__init__ 就这么置）；但客户端"自己"(MyButcherUnit) 的 .speed 是
+    # 摇杆当前速度：MoveUnit.set_speed/get_speed、BattlePlayerUnit.fix_hud_move_speed 每帧写，停下时 0/None。
+    # 服务端 AI 里读 butcher.speed 的只有 AICivilian.qaai_black_cal_hiding（距离/速度比谁先到出口）→ 调用期间换成 move_speed、调完还原。§9.16
+    def wrapped(self, *a, **k):
+        saved = []
+        for b in self.owner.room.unit_mgr.get_butcher_units():
+            ms = (GK.DM.player.get(b.pid) or {}).get("move_speed")
+            if ms:
+                saved.append((b, b.__dict__.get("speed")))
+                b.__dict__["speed"] = ms
+        try:
+            return fn(self, *a, **k)
+        finally:
+            for b, v in saved:
+                b.__dict__["speed"] = v
+    wrapped._sim_shim = True
+    return wrapped
+
+
 def install_unit_shims():
+    from common_cs.ai.AICivilian import AICivilian
+    if not getattr(AICivilian.qaai_black_cal_hiding, "_sim_shim", False):
+        AICivilian.qaai_black_cal_hiding = _with_server_butcher_speed(AICivilian.qaai_black_cal_hiding)
     from ClientUnits.GeneratorUnit import GeneratorUnit
     from ClientUnits.BaseUnit import BaseUnit
     from ClientUnits.WoodUnit import WoodUnit
@@ -191,14 +221,17 @@ def install_unit_shims():
         BaseUnit.sync_pos_dir = ServerUnitShim.sync_pos_dir
     if not hasattr(WoodUnit, "wood_oneway_tag"):
         WoodUnit.wood_oneway_tag = property(_wood_oneway_tag)
+    if not hasattr(WoodUnit, "check_lawyer_span_wood"):
+        WoodUnit.check_lawyer_span_wood = _wood_check_lawyer_span
 
 
 class ServerRoomShim(object):
     """服务端房间方法/属性。每条注明调用处与推断依据。"""
-    # QAAIButcher.set_level：room_type 为 CUSTOM/SINGLE_CUSTOM（自定义人机房）时难度取 player_set_ai_level=(监管, 求生者)，
-    # 否则按真人求生者段位均值(unit.avatar)算。模拟器对应"自定义房 + 手选难度"。
+    # QAAIButcher.set_level / AIEnvCombatLevel.table_data_analysis：room_type 为 CUSTOM/SINGLE_CUSTOM（自定义人机房）时难度取
+    # player_set_ai_level=(监管, 求生者)，否则按真人段位均值(unit.avatar)算。模拟器对应"自定义房 + 手选难度"。
+    # ⚠ WorldBase.__init__ 会写实例属性 self.room_type = None 盖掉类属性 → 在 WorldSim1v4.__init__ 里再赋一次（§9.16）。
     room_type = ComuKeys.ROOM_TYPE.CUSTOM
-    player_set_ai_level = (ComuKeys.CUSTOM_AI_LEVEL.LV_3, ComuKeys.CUSTOM_AI_LEVEL.LV_3)
+    player_set_ai_level = (ComuKeys.CUSTOM_AI_LEVEL.LV_4, ComuKeys.CUSTOM_AI_LEVEL.LV_4)   # LV_4 = 噩梦
     # iLogicGenerator.check_lawyer_fix_generator_score（律师开局找机评分）：先查 dict[uid]，否则取 end_camera_rot_time；
     # 为 None 时函数自己 return（不加分）。两者客户端只读不写（服务端在开局镜头转完时记）→ 取"没有记录"。
     end_camera_rot_time_dict = {}
@@ -218,21 +251,46 @@ class ServerRoomShim(object):
     already_die_num = 0
     already_win_num = 0
 
+    def get_detour_distance(self, start_pos, target_pos, nav_mesh_type, fast=False):
+        # 服务端房间签名多一个 fast（GlobalHookScoreCal.get_game_info 算监管到椅子 fast=True；缺它时选椅子抛，杰克扛人原地不动）。
+        # fast 的实现不在客户端 → 一律按精确寻路距离算（客户端 WorldBase 版），fast 调用计数。
+        if fast:
+            SHIM_STATS["get_detour_distance(fast=True → 按精确距离)"] += 1
+        return super(ServerRoomShim, self).get_detour_distance(start_pos, target_pos, nav_mesh_type)
+
+    def process_quick_speech_event(self, info):
+        # 服务端房间方法：AICivilian.qaai_send_message 发 AI 快捷发言（{qsid, key, uid, ai[, extra_info]}）。
+        # qaai 树里 qsp_history 只有发送方自己写；QuickSpeechComponent 是界面发言记录，没有 AI 读 → 空操作计数。
+        # （新架构 novice_civilian_parent 的 ReceiveQuickSpeech 会读历史，换那套 AI 时要重看。）
+        SHIM_STATS["process_quick_speech_event(快捷发言,空操作) qsid=%s" % info.get("qsid")] += 1
+
     def _get_all_generator_fix_rate(self, fast=False):
         # AICivilian.qaai_is_needed_save / AIEnvCombatUtility.cal_generator_score：
         # sum()>=400 判断修完 4 台、单值与 gen.get_cur_process_nosync() 比较 -> 每台机的破译进度列表
         return [g.get_cur_process_nosync() for g in self.unit_mgr.get_generator_units()]
 
 
+# 监管角色专属行为树 → 控制器类。服务端给人机挂控制器的代码不在客户端（客户端 change_ai 一律给基类 AIButcher）；
+# 依据是树里 `ac.*` 调用的方法只有这个类有：qaai_butcher_jack 调 shared_policy / jack_carry_policy / jack_hook_policy /
+# jack_guard_policy，只在 AIButcherJack 上（QAAIFactory 的 QAAIButcherJack 一个都没有，是配 qaai_butcher_common 的）。§9.16
+BUTCHER_TREE_CONTROLLER = {
+    "qaai_butcher_jack": ("common_cs.ai.AIButcherJack", "AIButcherJack"),
+}
+
+
 class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
     # (pid, 行为树)；行为树为 None = 不挂 AI（留给外部控制）
-    BUTCHER = (1, "qaai_butcher_common")                       # 厂长 -> QAAIFactory 选 QAAIButcher
-    CIVILIANS = ((14, "qaai_civilian_hard"), (15, "qaai_civilian_hard"),
-                 (16, "qaai_civilian_hard"), (17, "qaai_civilian_hard"))
+    # 噩梦难度的人机 = pydata.player_ai_conf[pid].nightmare_ai（§9.16）：杰克 qaai_butcher_jack，求生者 qaai_civilian_rank7。
+    BUTCHER = (30, "qaai_butcher_jack")                        # 杰克 -> QAAIFactory 选 QAAIButcherJack
+    CIVILIANS = ((14, "qaai_civilian_rank7"), (15, "qaai_civilian_rank7"),     # 医生、律师
+                 (17, "qaai_civilian_rank7"), (32, "qaai_civilian_rank7"))     # 园丁、空军
+    # 魔术师(21) 暂不用：LSkillCivilianMagicSubstitute 只在 SERVER_MODE 下导入 LogManager，建单位时 NameError（§9.16）
     SELF_ROLE = "butcher"                                       # 客户端必须有一个"自己"(GK.g_unit)
 
     def __init__(self):
         super(WorldSim1v4, self).__init__()
+        self.room_type = ServerRoomShim.room_type      # WorldBase.__init__ 置了 None
+        self.player_set_ai_level = ServerRoomShim.player_set_ai_level
         # 只有 NOVICE_BATTLE/STORY_BATTLE 等类型会置 is_battle_client（本地服务端）；BATTLE 会被当成联网对局
         self.world_type = ComuKeys.GAME_WORLD_TYPE.NOVICE_BATTLE
         self.rng = random.Random(0)
@@ -281,6 +339,20 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
 
     def attach_ais(self):
         """开局后给配置了行为树的角色挂 AI 之前，先做服务端开局时的密码机修机站位预计算（ServerGeneratorShim）。"""
+        # AICommonTrigger 在 WorldBattleClientBase.__init__ 里构造，那时房间还没有 scene_id → trigger.scene_id = None，
+        # AI 按图的预计算表（CirClePathInfo.CIRCLING_PATHS / PSYWAR_POS、HidingModel.HIDING_DATA，键 = SCENE_ID）全查不到，
+        # 绕板转圈 CirCle.init_circling_params 拿不到环路 → 挨刀后 QAAI_HIDING 原地不动（§9.16）。按 __init__ 原样（含教堂映射）重算一次。
+        act = self.ai_common_trigger
+        sid = self.get_scene_id()
+        act.scene_id = ComuKeys.SCENE_ID.CHURCH if sid in ComuKeys.SCENE_ID_GROUP.CHURCH_SCENE_IDS else sid
+        # tilecache 导航资源缺（§9.10）：NavManager.load_scene_nav_with_tilecache 登记了 tc 网格名但载入失败 → tc_init_done=False，
+        # 游戏自己把动态导航查询（get_detour_path_check_flag、poly 标志）换成 AI 网格。真机 tilecache 是载入的：开动态导航的求生者
+        # 去板子中心等点（在真网格上、离 AI 网格 ~4）寻路，换成 AI 网格就失败 → 挨刀后躲藏 start_move_to_cs 每帧 False、原地不动（§9.16）。
+        # 置 True 让游戏照真机走 tilecache 名，由 natives/detour 回退到 AI 网格 + 端点/高度边缘吸附（同 §9.14 依据）；动态障碍仍是计数空操作。
+        nm = self.nav_mgr
+        if nm is not None and not nm.tc_init_done and getattr(nm, "tc_nav_mesh_name", None):
+            nm.tc_init_done = True
+            SHIM_STATS["nav tc_init_done=True（tilecache 缺，由 AI 网格近似）"] += 1
         for g in self.unit_mgr.get_generator_units():
             g.ai_fix_pos = {}
             g.init_ai_fix_angle()
@@ -296,7 +368,8 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
         self._attach_bt_ais()
 
     def _attach_bt_ais(self):
-        """开局后给配置了行为树的角色挂 AI。按服务端做法：监管走 QAAIFactory，求生者走 change_ai(AICivilian)。"""
+        """开局后给配置了行为树的角色挂 AI。监管：角色专属树用对应的旧版控制器（BUTCHER_TREE_CONTROLLER），
+        通用树走 QAAIFactory；求生者走 change_ai(AICivilian)。"""
         from common_cs.ai.qaai_butcher.QAAIFactory import QAAIFactory
         for uid, (role, pid, bt) in self.roles.items():
             u = self.unit_mgr.get_unit(uid)
@@ -305,7 +378,12 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
             if role == "butcher":
                 if u.ai_controller:
                     u.ai_controller.destroy()
-                u.ai_controller = QAAIFactory.create_qaai_controller(pid, u, bt)
+                spec = BUTCHER_TREE_CONTROLLER.get(bt)
+                if spec:
+                    mod, cls = spec
+                    u.ai_controller = getattr(__import__(mod, fromlist=[cls]), cls)(u, bt)
+                else:
+                    u.ai_controller = QAAIFactory.create_qaai_controller(pid, u, bt)
                 u.reset_ai_flag()
             else:
                 u.change_ai(bt)
@@ -316,7 +394,11 @@ def utils_fixed_pos(pos_rot, scene_id):
     return utils.fixed_ow_scene_offset(pos_rot, scene_id)
 
 
-def make_1v4(core, scene_id=1, world_cls=WorldSim1v4):
+def make_1v4(core, scene_id=None, world_cls=WorldSim1v4):
+    # 默认 = 正式对局军工厂 scene_config[6]（ComuKeys.SCENE_ID.FACTORY）。scene_config[1] 是新手版军工厂（同一套资源、pos_info 相同），
+    # 但 AI 的按图数据表只有 6 → 用 1 时绕板/心理战/躲藏数据全缺（§9.16）。
+    if scene_id is None:
+        scene_id = ComuKeys.SCENE_ID.FACTORY
     import world as _world
     install_unit_shims()
     n = _world.register_scene_models(GK.DM.pos_info.get(scene_id, {}))

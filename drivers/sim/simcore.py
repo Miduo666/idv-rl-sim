@@ -186,6 +186,14 @@ def install_server_ai_island(log=print):
     stale = [m for m in ("worlds.WorldBattleClientBase", "worlds.WorldBattleBase") if m in sys.modules]
     sc = types.ModuleType("servercommon"); sc.Netease = game_kernel; sc.__path__ = []
     simenv.REAL["servercommon"] = sc
+    # 服务端顶层包 utils 的 ns / util：AI 模块服务端分支 `from utils import ns, util`，客户端分支对应 common_tools.ns /
+    # common_tools.utils（Cleaver、LSkillCivilianMagicSubstitute 的两个分支并列写着）。打成桩时 ns.ns('KNIFE_TYPE', {...})
+    # 得到桩对象 → 常量全错（杰克 Cleaver KeyError: 1）、util.play_animation 不播动画。只给这两个名字，其余仍是桩（§9.16）。
+    from common_tools import ns as _ns, utils as _cutils
+    ut = types.ModuleType("utils"); ut.__path__ = []; ut.ns = _ns; ut.util = _cutils
+    simenv.REAL["utils"] = ut
+    if "utils" in sys.modules and sys.modules["utils"] is not ut:
+        del sys.modules["utils"]
     for m in [m for m in sys.modules if m == "common_cs.ai" or m.startswith("common_cs.ai.")]:
         del sys.modules[m]
     root = os.path.join(simenv.ROOT, "common_cs", "ai")

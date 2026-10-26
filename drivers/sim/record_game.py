@@ -16,7 +16,7 @@ os.makedirs(os.path.dirname(OUT), exist_ok=True)
 core = SimCore(verbose=False, server_ai=True, seed=SEED)
 import sim1v4
 from common_cs.states.StatesConst import CIVILIAN_STATE
-w = sim1v4.make_1v4(core, 1)
+w = sim1v4.make_1v4(core)
 GK = core.GK
 TAGS = ("HANG", "HANGING", "FALL", "CARRY", "CATCHED", "STRUGGLE_DROP", "HURT", "FIX", "OPEN_DOOR")
 TAG_IDS = [(n, getattr(CIVILIAN_STATE, n)) for n in TAGS if hasattr(CIVILIAN_STATE, n)]

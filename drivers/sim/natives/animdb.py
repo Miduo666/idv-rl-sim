@@ -21,6 +21,7 @@ SKELETON_RULES = (
     (r"^chr/player/dm65_survivor_boy/", "dm65_survivor_boy"),
     (r"^chr/player/dm65_survivor_girl/", "dm65_survivor_girl"),
     (r"^chr/boss/butcher/", "dm65_butcher_ll"),
+    (r"^chr/boss/ripper/", "ripper"),       # 杰克 h55_ripper_lv1.gim；boss gim 里 ../../ripper.skeleton 30 处（按目录名推断）
 )
 
 STATS = collections.Counter()

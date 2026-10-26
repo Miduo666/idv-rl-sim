@@ -14,6 +14,12 @@ REAL = {}                          # 模块名 -> 真实替代模块(优先于�
 NATIVES = os.path.join(HERE, "natives")   # 原生模块的 Python 替代实现，放在 sys.path 最前
 # 与对局无关、导入链又会绕进 game_init 造成循环导入的模块：强制打桩
 FORCE_STUB = ("nets", "core.sdk", "core.SDKManager", "game_init")
+# 游戏导入时自带 `try: from X import f  except ImportError: <纯 Python 兜底>` 的 Cython 模块：不能打桩（桩"导入成功"会挡掉兜底），
+# 要让导入真的失败。CommonUtils.deepcopy_only_builtin_ref_py 打成桩时返回假值 → Buff.__init__ 的 `self.data = deepcopy(...)` 为假
+# 提前 return → 所有 Buff 半初始化、效果全不生效（加速/减速等）；AICommonTrigger.scene_datas 等同病（§9.16）。
+# 导入方 BuffMgr/AICommonTrigger/AIEnvCombatUtilityNew/ActivityButcherUnit/ActivityCivilianUnit/SunFlare 都有 except → copy.deepcopy；
+# SkillModifyManager 只在 SERVER_MODE 分支直接导入（它不在 AI 孤岛里）；game_init 已强制打桩。
+FORCE_MISSING = ("common_cs.cython_src.CommonUtils",)
 
 
 class Stub:
@@ -81,6 +87,9 @@ class StubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(self, name, path, target=None):
         if name in REAL:
             return importlib.machinery.ModuleSpec(name, self, is_package=True)
+        if name in FORCE_MISSING:
+            STUBMODS["<强制缺失>" + name] += 1
+            return None
         if any(name == p or name.startswith(p + ".") for p in FORCE_STUB):
             STUBMODS[name] += 1
             return importlib.machinery.ModuleSpec(name, self, is_package=True)

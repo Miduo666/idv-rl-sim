@@ -257,21 +257,38 @@ class scene_detour(object):
         m = self._mesh(name)
         return m.nearest(pos, _ext(half))[0] if m is not None else None
 
+    def _path(self, name, m, s, e):
+        """原生实现（libclient 热更版 0x8eb5d3c，§9.16）：端点 = 0x8eb36a8（ext×缩放 盒内 queryPolygons → closestPointOnPoly 三轴都在盒内
+        且 getPolyHeight 成功的最近者）失败再 findNearestPoly(同一 ext)；然后 findPath(maxPath 2048) → findStraightPath。ext = set_detour_extension
+        的值（游戏设 (1, extent_y, 1)），与这里 m.path 一致。"""
+        pts, fl, part = m.path(s, e)
+        if pts is None and m.walkable_radius:
+            # 近似：端点水平放宽到 walkable_radius(6) 重试一次。
+            # ① 回退网格（普通/tilecache 缺、落到 AI 网格）：依据同 get_height（真网格边界最多比 AI 网格往外多 walkable_radius）。
+            #    缺它时 cal_hangcivi_score 的 dis 为 None（整帧救人打分抛）。
+            # ② AI 网格本身（推断，未证实）：躲藏 qaai_get_hiding_move_position_new 离目标 ≥35 时就返回板子中心，start_move_to_cs 用
+            #    get_detour_path_check_flag（不带 use_dynamic → 明确查 AI 网格）寻路；板子中心离 AI 网格 ~4，按原生 (1,4,1) 端点找不到
+            #    → 挨刀后每帧寻路失败、原地不动。客户端脚本里没人放宽 extension（room.set_detour_extension 只有服务端可能调），
+            #    真服务端的导航实现不在客户端；依据只是"真人机不会站着不动"。超过 6 仍不可达。
+            wr = m.walkable_radius
+            pts, fl, part = m.path(s, e, (max(m.ext[0], wr), m.ext[1], max(m.ext[2], wr)))
+            if pts is not None:
+                FALLBACK["get_path 端点吸附(近似) " + ("回退网格" if self.meshes.get(name) is None else "AI 网格本身(推断)")] += 1
+        if part: PARTIAL[name] += 1
+        return pts, fl
+
     def get_path(self, name, s, e, poly_search=None, *a):
         QUERIES["get_path"] += 1
         m = self._mesh(name)
         if m is None or s is None or e is None: return None
-        pts, fl, part = m.path(s, e)
-        if part: PARTIAL[name] += 1
-        return pts
+        return self._path(name, m, s, e)[0]
 
     def get_path_with_flag(self, name, s, e, poly_search=None, *a):
         """flags 推断为各拐点所在多边形的标志（调用处 get_detour_path_check_flag 的使用方都没读它）。"""
         QUERIES["get_path_with_flag"] += 1
         m = self._mesh(name)
-        if m is None: return (None, None)
-        pts, fl, part = m.path(s, e)
-        if part: PARTIAL[name] += 1
+        if m is None or s is None or e is None: return (None, None)
+        pts, fl = self._path(name, m, s, e)
         return (pts, fl) if pts else (None, None)
 
     def get_poly_ref(self, name, bmin, bmax, maxn=65535, *a):

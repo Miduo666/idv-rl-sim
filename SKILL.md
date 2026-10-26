@@ -23,8 +23,9 @@
 4. 2026-10-15 那次只读 /proc 被弹"检测到修改客户端"，**在 Python 层和 libsec-lib 里都找不到对应机制**
    —— 支持"未必是只读 /proc 本身触发"的判断。彻底坐实需逆 175MB 的 `libclient.so`（见 §7 待办）。
 5. **模拟器 + 强化学习主线（2026-10-24 起）**：字节码还原后在标准 CPython 3.11 无引擎跑游戏自带的本地服务端对局（§9）。
-   碰撞、AI 孤岛、导航（官方 Detour）、修机站位、主循环都已完成，**5 个人机角色已能自主移动**（求生者修机/躲藏、监管追人）；
-   当前硬阻塞是交互动画的根运动位移数据（方案待用户选）→ **从 §9.6.0 / §9.6.3 待办清单接着做**。
+   碰撞、AI 孤岛、导航（官方 Detour）、修机站位、主循环、根运动都已完成，能打完整局；
+   **2026-10-26 起编成改为游戏真实的"噩梦"自定义人机（杰克 + 4×qaai_civilian_rank7，场景 6），挨刀会逃、会救人**；
+   **天赋完全没接、buff 是否生效未核实** → **下个会话从 §9.16.7 接着做**。
 
 ---
 
@@ -642,7 +643,7 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 - `world_type` 仍用 `NOVICE_BATTLE`：只有 NOVICE/STORY 等类型会置 `is_battle_client`（本地服务端）；`BATTLE` 会置 `is_battle_server`=联网对局。`game_type` 设 `KILL`。
 - `add_units_in_scene(pid, pos, dir2, uid, npc_info, pid_info_source, eid, use_special_y)`：**`pid_info_source==1` 才是 npc 表**，0 从 `DM.player` 取（第一次读反了）。
 - 求生者 `u.change_ai(bt)` → `AICivilian`；监管按服务端做法 `QAAIFactory.create_qaai_controller(pid, u, bt)`（`CONTROLLER_MAP` 按 pid 选 `QAAIButcherJack` 等，厂长/小丑用基类 `QAAIButcher`）。客户端 `BattlePlayerUnit.change_ai` 给监管的是旧 `AIButcher`，`qaai_butcher_*` 行为树要的 `make_global_policy` 它没有。
-- 配表里**没有任何地方引用 `qaai_*`**：服务端给人机分配 AI 的配置不在客户端，编成自己定（默认厂长 `qaai_butcher_common` + 4×`qaai_civilian_hard`）。
+- ~~配表里**没有任何地方引用 `qaai_*`**~~ **2026-10-26 更正：错。** `pydata/player_ai_conf` 按角色、按房间类型配了人机行为树（§9.16）；`qaai_civilian_hard` 只出现在 `pydata/player` 的 `ai` 字段（pid 3/14/17/32），不是自定义人机房用的。当时的编成（厂长 `qaai_butcher_common` + 4×`qaai_civilian_hard`）没有依据。
 - 难度：`QAAIButcher.set_level` 在 `room_type ∈ {CUSTOM, SINGLE_CUSTOM}` 时取 `room.player_set_ai_level=(监管, 求生者)`（`CUSTOM_AI_LEVEL` 1–4），否则按真人段位均值 → 模拟器对应"自定义人机房"。
 - 跑酷家(pid 25) 建单位时 `VSkillCivilianParkour` 读 `_skill_modify_mgr` 失败，默认编成先避开。
 
@@ -663,6 +664,8 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 **2026-10-26 更新：交互根运动已解决**——解析引擎动画资源（§9.13），根骨骼位移与录像终点精确吻合，求生者已进入修机结算、监管踩板/求生者放板带真实位移。
 当前阻塞变成几个服务端成员缺口（`wood_oneway_tag`、`end_camera_rot_time_dict`、躲藏目标 None），见 §9.13 末尾与 §9.6.3。
 **2026-10-26 再更新：第一次打完一整局（§9.15，360 秒监管四杀，tick 异常 0），模拟可复现（§9.14）。** 下一步 = 多局统计校验。
+**性能（§9.18）**：噩梦编成约 0.5 倍速，profile 显示主要耗时在碰撞层（杰克 AI 的查询），原因与优化待核实；批量/并行运行放 3090（`ssh gpu`，未部署）。
+**2026-10-26 晚更新（§9.16）：之前用错了人机、难度没生效、所有 Buff 半初始化；已换成噩梦编成并补一批缺口，挨刀逃跑/救人都正常了。交接点 = §9.16.7。**
 
 以下是 2026-10-25 的记录：
 - **碰撞层完成**：`.scn_col` 静态网格 + 板/窗/门/角色等动态体，射线、扫掠、静态测试、路径相交全部接上游戏的 `CollisionManager`，
@@ -741,7 +744,7 @@ col_object(obj_type, size, unit_type, group, mass, use_model_when_fail, layer[, 
 1. ~~交互动画根运动位移~~ —— **2026-10-26 已解（§9.13，方案 2 解析引擎动画资源）**。遗留：`span` 两次录像对不上（变体动画？）、`default_loop/default_rate` 未进数据库、格式 0（极少）未解。
 1b. ~~服务端成员缺口 / 运行不确定性~~ —— **2026-10-26 已补（§9.14）**；躲藏目标 `None` 判为游戏自身 bug 保留（待真服务端行为验证）。
 2. ~~求生者躲藏目标~~：来源已查清 = 窗中心不在 AI 导航上，按引擎语义取不到高度（§9.14），保留。
-3. **性能**：0.7 倍速（450 帧墙钟约 23 秒）；导航查询每帧上百次（`get_path`/`get_height`），碰撞射线每帧十几次。先 profile 再优化（缓存寻路、减少 tick）。
+3. **性能**：噩梦编成约 0.5 倍速。**2026-10-26 已 profile（§9.18）**：主要耗时在碰撞层（杰克 AI 的碰撞查询），不在导航；原先"导航是瓶颈"的猜测不对。原因和优化方案**待仔细核实**（§9.18.3），之后需要并行的批量运行放 3090（§9.18.4）。
 4. **找回普通导航与 tilecache**（还原度，§9.10）：设备场景包 `res_pull/scene_pkg/` 里有 222 个 MSET / 11 个 `TEST`，按分块世界包围盒配对出军工厂那份；`TEST` 压缩层格式要认；之后接 DetourTileCache（动态障碍）。
 5. **AI 打完一局** → 跑多局统计（胜率、时长、修机曲线）作模拟器正确性检查与 RL baseline（§9.6.4）。
 6. 遗留小项：`GK.LM`（1 个 AI 模块导入失败）；路径与碰撞网格 ~7% 擦墙（主厂房/地下室，§9.10）；碰撞近似项（盒子连续扫掠等，§9.6.1）；
@@ -779,6 +782,7 @@ python t_detour.py                       # 导航层自测（真实军工厂 AI 
 python run1v4.py 1 450 --server-ai       # 1v4 对局（约 20 秒）；末尾打印碰撞/导航统计、服务端垫片统计、调用样本
 python t_determinism.py 300 0            # 可复现检查：两个进程逐帧比位置（约 25 秒）
 python run_full.py 18000 900 0           # 整局（最多 10 分钟模拟，墙钟同量级）：每 900 帧打印机进度与求生者状态
+python profile_sim.py 300 0 60 --out p.prof   # 性能剖析：预热 60 帧后 cProfile 300 帧（约 50 秒）；自身/累计 Top 40 + 按文件汇总 + 进程内存（§9.18）
 python replay_scan.py ..\..\res_pull\replays\<guuid> "<RPC 名正则>" 3    # 录像事件流概览（需 PYTHONPATH=逆向存档\_scripts）
 python fixslot_from_replay.py ..\..\res_pull\replays\<guuid>          # 录像里的修机方位键与站位对照
 python usage.py "<调用名正则>" "" 4 20 | Out-File -Encoding utf8 x.txt   # 查调用处用法（正则里最后一个标识符用来预筛 idx）
@@ -1012,7 +1016,194 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
   3 个求生者 9–21 秒走到密码机后停下，此时有机子在涨进度（30 秒时 3 台机分别为 35/21/18），**停下是在修机，不是卡死**；监管 17.5 秒追上一名求生者，之后两人相距 7、一起定住，推断是攻击动作走到根运动后卡住（§9.12.3），没有逐条验证。
   新暴露的被吞异常：`WoodUnit` 缺 `wood_oneway_tag`（6 次，翻窗相关，推断是服务端成员）、`WorldSim1v4` 缺 `end_camera_rot_time_dict`（1 次）。
 
----
+### 9.16 ★ 人机选型与难度核查：之前用错了 AI（2026-10-26）
+
+起因：用户看录像发现两个严重问题——求生者挨刀后进 `QAAI_HIDING` 原地不动、有人上椅没人救。核查结论：**行为树选错 + 难度参数没生效**。
+
+**1. 难度没生效：`room.room_type` 实际是 None**（临时探针实测：`make_1v4` 跑 150 帧后读 `w.room_type`、`w.ai_common_trigger.level/level1/civilian_param`、`DM.match_ai_civilian_common_param_data`）。
+`ServerRoomShim` 把 `room_type = CUSTOM` 写成类属性，但 `WorldBase.__init__` 第 80 行 `self.room_type = None` 用实例属性盖掉了 →
+`AIEnvCombatLevel.table_data_analysis` 和 `QAAIButcher.set_level` 都没走自定义人机房分支：
+- 求生者：`bot_src` 为 None、没段位 → `CIVILIAN_RANK_LEVEL_MAP['QAAI_CIVILIAN_HARD'] = 30` → `parse_level_data(30)` 走 **10~99 的写死参数分支**（`fix_prop_range (1,0.95)`、`save_policy ((1,2),(2,1,2))`、`dis4enterhiding (300,380)`…），不读配表。
+- 监管：`but_level` 一直没被赋值（三个 bot_src 分支都不中）。
+
+**2. 自定义人机房真正用的行为树**（`pydata/player_ai_conf`，按 pid）：
+| 难度（`CUSTOM_AI_LEVEL` → 界面名） | 求生者 | 监管 | 难度 level（`table_data_analysis` / `set_level`） |
+|---|---|---|---|
+| LV_1 新手 / LV_2 专家 / LV_3 大师 | `custom_ai` = **`novice_civilian_parent`**（3 档同一棵树） | `custom_ai` = `qaai_butcher_common` | 求生者 `210+档位` = 211/212/213 → 读配表 `match_ai_civilian_common_param[(level, play_unit_role)]`；监管 `but_level` 同为 211~213 |
+| LV_4 噩梦 | `nightmare_ai` = **`qaai_civilian_rank7`** | `nightmare_ai` = 角色专属（`qaai_butcher_jack` / `_hard` / `_imper` / `_mouth` / `_tentacle` / `_dark_crow4`） | 求生者 level 8（`CIVILIAN_RANK_LEVEL_MAP['QAAI_CIVILIAN_RANK7']`），读配表 `(8, role)` |
+- `train_mode_ai` 前三档同 `custom_ai`，第 4 档 = `nightmare_ai`。`play_unit_role`：真人是监管 = 1、是求生者 = 2（配表两套参数不同，如 `(213,1).hide_param[0]=60`、`(213,2)=120`）。
+- **能当自定义人机的角色**：求生者 14、15、17、21、25、32、36、62、72、78、79、91、94、96、97、110（**16 没有**）；监管 117、19、30、64、66、67、84、85（63 只有 train/nightmare）。**厂长 pid 1 没有 `custom_ai`**——当前编成的厂长和 16 号都不是游戏会派的人机。
+- `novice_civilian_parent` 是**另一套架构**（101 行；`RefreshAllCivilianStatus` → `CalculateGlobalPolicy` → `CheckAndSetGlobalPolicy` RVO/LISTEN/FIX/FIXDOOR/SAVE/HIDING/TREATED/TREAT/ESCAPE/HANGOUT → `SetBaseModule`），
+  对应 `ai_env_unit/civilian/`（`RvoMove`/`SupervisedHiding`/`Priming`/`PsyWar`/`HangOutMgr`/`QuickSpeech`/`AIBattleEvent`）和 `AIEnvCombatUtilityNew`，**模拟器里从没跑过**，要补的服务端缺口未知。
+  `qaai_civilian_hard`(345 行) 与 `qaai_civilian_rank7`(314 行) 是同一架构（`QaaiCivilianPolicy*`），节点有差异。
+- 配表 `match_ai_civilian_common_param` 138 个键（`(0..)`、`(100..106)`、`(1101..15xx)`、`(211..213)`…，每个 ×role 1/2）；`(214,1)` 不存在。
+
+**3. 两个现象的初步归因（推断，未逐条验证）**：
+- 挨刀后 `QAAI_HIDING`：qaai 树里 `QaaiCivilianPolicyIsInPanic` → `QAAI_HIDING`，**HIDING 就是被追时的逃跑/绕板窗策略**（放板也在这支，见 `idv-reverse-resume/auto-pallet.md`），不是"躲起来"。
+  原地不动的直接原因很可能就是 §9.14 那个每局 ~8700 次的 `qaai_get_current_best_hiding_target` `None / float`：躲藏目标算不出来 → 这一帧单位 tick 被打断 → 不移动。§9.14 "判为游戏 bug 保留"的结论**要重新审视**（它直接造成了可见的错误行为）。
+- 没人救：参数走的是写死的 30 档；救人还依赖 `save_or_fix`(SOF)/`AIEnvCombatUtility` 打分，未查是参数问题还是被吞异常。
+
+**4. 改成噩梦编成（2026-10-26，用户定"先做噩梦，监管换杰克"）**：
+- `sim1v4.py`：`WorldSim1v4.__init__` 里重新赋 `room_type = CUSTOM`、`player_set_ai_level = (LV_4, LV_4)`；
+  编成 = 杰克(30) `qaai_butcher_jack` + 医生(14)/律师(15)/园丁(17)/空军(32) 各 `qaai_civilian_rank7`。
+  实测求生者 `level 8 / level1 3 / short_btid rank7`，参数读配表 `(8, 1)`。
+- **魔术师(21) 不能用**：`LSkillCivilianMagicSubstitute`（求生者技能的逻辑层 `LSkill*`）只在 `SERVER_MODE` 下导入 `LogManager`，客户端模式建技能时 NameError → `_init_units` 中断。
+  这类 `LSkill*` 是服务端逻辑，和 AI 孤岛同一类问题；角色多了要考虑把技能逻辑也放进孤岛。
+- **杰克的控制器 = 旧版 `common_cs.ai.AIButcherJack`，不是 `QAAIFactory` 的 `QAAIButcherJack`**：`qaai_butcher_jack` 树里 `ac.*` 用到的
+  `shared_policy`/`jack_carry_policy`/`jack_hook_policy`/`jack_guard_policy` 只有 `AIButcherJack` 有（逐个对过）；`QAAIButcherJack` 是配 `qaai_butcher_common` 的。
+  服务端选控制器的代码不在客户端（客户端 `change_ai` 一律给基类 `AIButcher`），按"树要的方法谁有"定 → `sim1v4.BUTCHER_TREE_CONTROLLER`。
+  `AIButcherJack.but_level` = `AIButcher.__init__` 默认 10（只有 `QAAIButcher.set_level` 会改，噩梦专属树不走它）。
+- 房间 `process_quick_speech_event`（AI 快捷发言）：qaai 树里 `qsp_history` 只有发送方写、`QuickSpeechComponent` 是界面发言记录 → 空操作计数。缺它时每帧在 `qaai_send_message` 抛，打断求生者 tick。
+- 杰克根运动：`animdb_build.py … chr_boss … ripper.skeleton` → `res_pull/animdb/ripper.json`（638 个动画）；`animdb.SKELETON_RULES` 加 `chr/boss/ripper/ → ripper`（按目录名推断）。
+- 开局一次 `KeyError: '32_bt_arg1'`（空军技能参数）：AI 第一次 tick 早于 `try_load_table_data`，之后正常。
+- 450 帧：tick 异常 0、被吞异常只剩上面那 1 次；0.5 倍速（比原来的 0.7 慢）。
+
+**6. 噩梦编成整局暴露并补上的缺口（2026-10-26，每条依据写在代码注释）**：
+| 缺口 | 现象 | 处理 |
+|---|---|---|
+| 服务端 `utils.ns` / `utils.util` 打成桩 | `Cleaver.KNIFE_TYPE = ns.ns(...)` 成了桩对象 → 杰克扛人 `KeyError: 1`；`AIButcher` 常量同病；`util.play_animation` 不播 | `simcore.install_server_ai_island` 给 REAL 模块 `utils`：`ns = common_tools.ns`、`util = common_tools.utils`（客户端分支并列写着这两个）。`scan_server_imports.py` 扫过：AI 模块从 `utils` 只要这两个名字 |
+| 房间 `get_detour_distance(..., fast=True)` | `GlobalHookScoreCal.get_game_info` 抛 → 杰克选不出椅子，扛起人原地不动直到挣脱（每 29 秒循环一次） | `ServerRoomShim.get_detour_distance` 接 `fast`，按精确距离算、计数 |
+| 监管 `.speed` 语义冲突 | `qaai_black_cal_hiding` 除零（每局 2600+ 次，逃生阶段）：客户端"自己"`MyButcherUnit.speed` 是摇杆当前速度（`MoveUnit.set_speed/get_speed`、`fix_hud_move_speed` 每帧写，停下 0/None） | 只包这一个读处（全 AI 唯一读 `butcher.speed` 的地方）：调用期间换成配表 `move_speed` |
+| `math3d.matrix.make_rotation_between`、`rotation.get_axis_angle/set_axis_angle` | 杰克雾刃 `AirPower.tick_trace_direction` | 实现 + 自测（a·M = b、轴角重建误差 1e-16） |
+| 回退网格寻路端点 | `cal_hangcivi_score` 第 253 行 `dis` 为 None（求生者到被挂者寻路失败）→ 整帧救人打分 tick 异常，182 秒后求生者全卡 | `detour.get_path`：回退查询失败时起终点搜索范围水平放宽到 `walkable_radius` 重试（同 §9.14 get_height 的依据） |
+| **`ai_common_trigger.scene_id` = None + 场景用错** | 挨刀后 `QAAI_HIDING` 原地不动的**根因**：`switch_hiding_circle` 失败 → `qaai_hiding_circle(板)` → `CirCle.init_circling_params` 查 `CirClePathInfo.CIRCLING_PATHS[scene_id][板整数坐标]`（预计算绕障环路）查不到 → 不设主障碍物 → `loop_circling` 直接 return、不下移动指令 | ① `AICommonTrigger` 在 `WorldBattleClientBase.__init__` 构造时房间还没 scene_id → `attach_ais` 里按 `__init__` 原样重算；② **`scene_config[1]` 是新手版军工厂**（lut `jungongchangxinshou`），`scene_config[6]` = `SCENE_ID.FACTORY` 正式对局版（多 70+ 项配置），`pos_info` 相同；AI 按图表 `CIRCLING_PATHS`/`PSYWAR_POS`/`HIDING_DATA` 只有 6（实测 6 号表 60/60 板窗命中）→ `make_1v4` 默认场景改 6 |
+| tilecache 缺 → 游戏自己换 AI 网格 | `NavManager.get_detour_path_check_flag(use_dynamic=True)` 在 `tc_init_done=False` 时改查 AI 网格 | `attach_ais` 置 `nav_mgr.tc_init_done=True`：游戏照真机查 tilecache 名，由 `natives/detour` 回退 AI 网格 + 吸附；动态障碍仍计数空操作 |
+| **挨刀后原地不动（场景 6 下仍在）** | 链路：`QAAI_HIDING` → `get_hiding_unit`=板 → `switch_hiding_circle` True → `qaai_get_hiding_move_position_new`：**离目标 ≥35 直接返回板子中心**（第 3804 行，设计如此）→ `qaai_set_move_position` → n299 `QaaiCivilianMove` → `qaai_move_to_pos`（**不看结果恒返回 True**）→ `start_move_to_cs` 第 615 行 `get_detour_path_check_flag(cur, tgt, polyflag)` **不带 use_dynamic → 明确查 AI 网格** → 板子中心离 AI 网格 ~4、端点 (1,4,1) 找不到 → 第 657 行 False，每帧如此 | **原生 `get_path` 反汇编**（`pymethods.py` → 包装 `0x8EE9900` → 转发 `0x8eeb3e0`(x0=实现指针) → `0x8ee6f94` → `[scene_detour vtable+0xb8]` → 名字查表 → **`0x8eb5d3c`**）：端点 = `0x8eb36a8`(ext×缩放盒内 `queryPolygons(128)` → `closestPointOnPoly` 三轴在盒内且 `getPolyHeight` 成功的最近者) 失败再 `findNearestPoly`(同 ext) → `findPath(2048)` → `closestPointOnPoly` → `findStraightPath`。**ext 就是 set_detour_extension 的值，与模拟器一致**。客户端没人放宽 extension（`room.set_detour_extension` 只可能服务端调）→ **近似（推断）**：`detour._path` 端点失败时水平放宽到 walkable_radius(6) 重试一次，AI 网格本身也做，单独计数 `FALLBACK["get_path 端点吸附(近似) AI 网格本身(推断)"]`。依据只是"真人机不会站着不动"；真服务端导航实现不在客户端，待真值验证 |
+| 注意：`§9.10` 旧记 SceneDetour vtable `0x9f40a98`+0x1a0 → get_height `0x8eb5780` | 本轮按 relaptr 解 `0x9f40a98` 起的槽对不上（+0x1a0 → `0x8EF2EBC`，是按网格名查表的外层方法）；外层方法再调每网格对象的实现（get_path = `0x8eb5d3c`）| 以本行链路为准，旧地址待核 |
+| **★ 所有 Buff 一直半初始化（项目开始就有）** | `Buff.__init__`：`self.data = deepcopy(DM.skill_state.get(bid))`，`deepcopy` = `common_cs.cython_src.CommonUtils.deepcopy_only_builtin_ref_py`（Cython 原生）→ 自动打桩"导入成功"→ 桩函数返回假值 → 第 483 行 `if not self.data: return` → **buff 效果全不生效**（加速/减速等；杰克雾刃 `VSkillFogBase` 读 `BuffSFx_list` 每帧抛 1.5 万次）。`AICommonTrigger.scene_datas = deepcopy(fresh_circling_paths…)` 同病 | `simenv.FORCE_MISSING`：这个模块让导入真的失败 → 游戏自带的 `except ImportError: deepcopy = copy.deepcopy` 生效（BuffMgr/AICommonTrigger/AIEnvCombatUtilityNew/ActivityButcher/CivilianUnit/SunFlare 都有；SkillModifyManager 只在 SERVER_MODE 分支直接导入、它不在孤岛里）。**同类排查** `scan_try_imports.py <run_full 输出>`：try 块里导入且被打桩的 20 个模块里，对局相关的只有这个；`cython_tools`(`if not cython_tools` 真值判断，桩为假 → 走 _py 兜底，没事)、`common_cs.map.ordnance_factory1_surface`(军工厂没有地面数据文件，游戏 `except Exception: grids = {}`，打桩结果等价) |
+| 律师翻窗 `WoodUnit.check_lawyer_span_wood` | 律师(15) 翻非墙窗时 `LStateCivilian.enter_state`(SPAN) 第 383 行抛 → SPAN 挂着永不退出 → 倒地后 `CATCHED` 状态检查不过（`player_catch` 在 `iLogicButcher:794` 返回 False）→ 杰克 `catch` 原地 idle 两百多秒、整局卡死 | 空操作计数（全脚本唯一调用、返回值不用；推断是服务端律师翻窗统计） |
+| 未补：`get_hiding_near_valid_pos` 第 104 行 `airpower_dir.cross(air2self) >= 0` | 向量直接与 0 比大小（别处写法是 `.cross(...).y <= 0`），模拟器 `vector.__ge__`（按长度，推断）碰到 int 抛；NeoX 原生行为无依据 | 1 次/局，保持原样 |
+| 未补：`Buff.BuffSFx_list` | `VSkillFogBase._update_buff_sfx` 遍历 buff 的特效列表：`Buff.__init__` 在 `DM.skill_state` 查不到 bid 时第 483 行提前 return（半初始化），客户端 `add_buff` 不查 `inited` | 修完导航后 240 秒内未复现，待整局再看 |
+| 未补：`cal_treatcivi_score` 第 302 行 | 治疗打分表里残留已淘汰求生者 uid，`unit_mgr.get_unit` 为 None | 待查服务端淘汰者是否留在单位表 |
+
+**救人已恢复**（场景 1 那局）：c141 救下 c140（45.5→61.6s）、c139 救下 c141；杰克会挂椅。`analyze_game.py <录像>` = 策略占比/挨刀后反应/挂椅期间其他人在干什么。
+
+**5. 疑点已排除（2026-10-26）：NeoX `math3d.rotation(...)` 构造参数顺序 = (x, y, z, w)，与模拟器一致**
+- 全脚本静态扫描 `math3d.rotation(<4 个常量>)`：`(0,0,0,1)` 5 处（cinematic，按 xyzw 是单位元）；`(1,0,0,0)` 4 处
+  （`iLogicTramcar`/`LMineTrainCarrierComponent._cal_player_hitted_direction`、`AirPower.tick_trace_direction` 等）**全是"造一个对象后立刻
+  `set_axis_angle(...)` 覆盖"**，初值不被使用；具体四元数 `(6e-06, -0.7386, 6e-06, 0.6741)`（`FireworkVehicleUnit` 载具朝向）按 xyzw = 绕 Y 偏航约 -95°，
+  按 wxyz 会是绕斜轴翻约 180°，不合理。→ xyzw。以下是当时记下的疑点原文：
+- （原疑点）NeoX `math3d.rotation(...)` 构造参数顺序可能是 (w, x, y, z)
+- 依据：`AirPower.tick_trace_direction`（杰克雾刃）写 `rot1 = math3d.rotation(1, 0, 0, 0)` 当单位四元数，再 `rot1.set_axis_angle(axis, 0)`、`rot2.slerp(rot1, rot, factor)`。
+  若顺序是 (x,y,z,w)，`(1,0,0,0)` 是绕 x 转 180°，不像单位元 → 暗示 w 在前。模拟器 `natives/math3d.py` 的 `rotation(x, y, z, w)` 是 x 在前。
+  这一处紧接 `set_axis_angle(axis, 0)` 覆盖成单位旋转，不受影响；**别处直接用 4 个数构造 rotation 的地方可能错**，没逐个查。
+- 别和"坐标 XZY"混淆：用户 ESP 代码（`Code_For_id5/IdentityV/jni/src/Android_draw/PySelf.h` 的 `struct {float x, z, y;}` = x/高度/y，
+  `NativeBones.h` 的 objcoor `+0xa0 = X/高度/Y`）说的是**位置三个 float 的第二个是高度** = NeoX Python 的 `vector(x, y, z)` y 朝上，模拟器一致（碰撞/导航/录像都对上）。
+  ESP 骨骼读的是 4×4 矩阵（行主序、平移在第 4 行、行向量右乘，与模拟器 `matrix` 一致），**没读过四元数**，定不了 rotation 的分量顺序。
+- 核实办法（未做）：静态扫全部脚本里 `math3d.rotation(<4 个常量>)` 的写法，看单位元是写 `(1,0,0,0)` 还是 `(0,0,0,1)`；
+  或在用到 `rotation.x/y/z/w` 分量的地方看语义。RAWANIMA 文件里的四元数是 xyzw（§9.13，按数据验证），那是文件格式，不代表 Python 构造参数顺序。
+
+#### 9.16.7 ★ 交接（2026-10-26 晚，**下个会话从这里接**）
+
+**当前代码状态**：分支 `claude/inspiring-maxwell-hdavsx`，**本轮改动全部未提交**（`sim1v4.py`、`simcore.py`、`simenv.py`、`natives/{detour,math3d,animdb}.py`、`run_full.py`/`record_game.py`/`t_determinism.py` 改默认场景；
+新文件 `analyze_game.py`（录像分析）、`scan_server_imports.py`（服务端顶层导入扫描）、`scan_try_imports.py`（"有 ImportError 兜底却被打桩"扫描）；另一会话的 `profile_sim.py` 也未提交）。
+`res_pull/animdb/ripper.json` 新生成（杰克 638 个动画）。**`t_determinism.py` 本轮改完没重跑**，提交前先跑一次确认仍逐帧一致。
+
+**最新一局**（种子 0，噩梦编成，场景 6，`record_game.py 0 2 18000` → `res_pull/replay_sim/seed0_nightmare.jsonl`，视频 `seed0_nightmare.mp4` 445MB，30fps = 2 倍速，**视频时间 × 2 = 模拟秒**）：
+- 杰克 210/390/480 秒各淘汰一人；最后 c138 一人在场，600 秒上限仍未结束（7 台机 360 秒全满；剩一人时为何没开门/地窖逃生**未查**）。
+- 挨刀后 8 秒：10 次里 8 次几乎全程在跑（不动 0–23/120 帧），距离拉开到 100–400。被打倒后挂椅期间总有人 `QAAI_SAVE`，c141 两次救下 c139。
+- 被吞异常只剩：`qaai_need_message` 第 2930 行 `'>' None int`（44 次，n314 快捷发言节点在树尾，影响小，未查）、`get_hiding_near_valid_pos` 向量与 int 比较（6 次，见上表）、开局一次 `32_bt_arg1`。tick 异常 0。
+- 导航近似计数（这局）：`get_path 端点吸附 AI 网格本身(推断)` 与回退网格各数千次——**这条推断（§9.16 表）对行为影响大，下个会话优先找真值**（例如真录像里 AI 求生者被追时的轨迹终点是否就是板子中心）。
+
+**用户 2026-10-26 提的 4 个问题与回答（核实程度注明）**：
+1. **Buff / 天赋是否完全应用 —— 否。**
+   - **天赋（被动技能/genius）完全没有**：探针 60 秒时 5 个角色 `passive_skill_dct` 全是 None。人机天赋由服务端按 `player_ai_conf[pid].ai_genius_id`（杰克 8；另有 `con_lose_ai_genius_id`/`timeout_ai_genius_id`）派发，
+     **客户端没有任何代码读 `ai_genius_id`**；`global_data_ai` 相关只有 `ai_genius_lvs=(20,60,100,130)`、`new_novice_ai_genius_lv`、`new_novice_rank12_ai_genius=10`。
+     → 下一步：找 `ai_genius_id` 指向哪张表/哪组天赋（配表 grep 天赋方案表；录像 snapshot 里人机实体的天赋字段可作真值，§9.17 说求生者实体 38 键含天赋），再看客户端怎么把天赋装进 `passive_skill_dct`、
+     哪些天赋会改事件形态/数值（`SkillModifyManager`，每个单位都有实例但没有天赋输入；`GlobalHookScoreCal.judge_genius_lv` 等 AI 打分也读天赋）。
+   - **Buff**：数据半初始化的 bug 已修（`simenv.FORCE_MISSING`，§9.16 表）。但**探针 60 秒内 `BuffMgr.Buff` 一个都没创建**——客户端 BuffMgr 的 buff 多数靠服务端消息下发，本地服务端模式下逻辑层 buff 走哪条路（`combat_core` 的 Buff 组件？`LSkill*`？）**未核实**，
+     "受击加速"等效果目前是否生效不知道。→ 下一步：在真录像事件流里找 `et=60 BUFF` 的 bid 列表当对照，对比模拟里同类事件后单位属性（`speed_real`、`msm`）是否变化。
+2. **噩梦人机方案是否完整 —— 部分。** 已做：行为树（`nightmare_ai`：求生者 `qaai_civilian_rank7`、杰克 `qaai_butcher_jack` + 控制器 `AIButcherJack`）、自定义房 `room_type=CUSTOM` + `player_set_ai_level=(LV_4,LV_4)`
+   → 求生者 level 8、参数读配表 `match_ai_civilian_common_param[(8,1)]`；场景用正式军工厂 6（AI 按图表都在）。**未做**：人机天赋（上条）；求生者角色按 `custom_nightmare_bot_weight` 抽取（现在手选 14/15/17/32，魔术师 21 因 LSkill 缺 LogManager 不能用）；
+   杰克 `but_level` 停在 `AIButcher` 默认 10（噩梦专属树不走 `QAAIButcher.set_level`，是否该有别的难度来源未查）；道具/外观；`LSkill*` 技能逻辑层是客户端模式导入（同 AI 孤岛问题，空军/魔术师等技能可能缺服务端分支）。
+3. **本次结果分析**：见上"最新一局"。**用户观察到的不合理现象（未分析）**：**视频 1:48–2:22（≈模拟 216–284 秒）监管和求生者隔着一堵墙，监管往左求生者往右、监管往右求生者往左，循环了很久**（两人隔一段距离，不一定很近）。
+   用户判断"可能就是第五人格原本 AI 策略不合理"。候选原因（都未查）：① 求生者 `CirCle.loop_circling` 绕障环路（`reckon_best_node` 按监管所在节点选离监管最远的方向 → 与监管对称移动是设计行为）；
+   ② 杰克 `AIButcherJack.jack_carry_policy` 追人用寻路/预测（`pre_civi_pos`、`check_turning`），隔墙时没有"绕过去"或雾刃隔墙出刀（`try_use_across_wall_fog`）打破僵局——要查雾刃是否真的在用（buff/技能/动画是否生效）；
+   ③ 模拟器近似导致（端点吸附、tilecache 缺失、碰撞擦墙 ~7%）。下个会话先在该时间窗逐帧看双方策略/目标点/路径，判断是 AI 设计还是模拟误差。
+4. **改成第五人格原生录像格式 —— 不简单，详见 §9.17（另一会话的调研）。** 原生录像 = 开局快照（pickle，`snapshot_0.snap_shot.event_data` 60 键/79 实体）+ 按时间的服务端消息流（真录像 236 秒 2.9 万条事件、35 种 `et`、48 种 RPC）；
+   加载只校验 `version == 1.0`。**但模拟器本地服务端模式基本不发消息**（服务端逻辑直接写客户端对象），录不到这条流，只能按逐帧状态反推合成事件（移动 `handle_joystick_move_self_event`、状态 `et=202`、机进度 `client_update_process` …）。
+   §9.17 建议的第一步（不写合成器）：把真录像复制成新 guuid 加进 `vmap.txt` 看能否播放；再整体平移一个求生者的移动事件看客户端是否照改后数据渲染。要 root 写手机目录、用新 guuid（别覆盖真实对局）。
+
+**下个会话建议顺序**（先跟用户确认）：① 提交本轮代码（先跑 `t_determinism.py 300 0`）；② 天赋接入（问题 1）；③ 216–284 秒隔墙对峙定性（问题 3）；④ 剩一人不逃生；⑤ 多种子统计（§9.6.4）；⑥ 原生录像（§9.17 第一步，需手机）。
+
+**本轮可复用的探针套路**（脚本在会话 scratchpad、未入库，思路可照搬）：
+- 某单位 AI 卡住：包 `AICivilian` 的若干方法记参数/返回（`get_hiding_unit`/`switch_hiding_circle`/`qaai_get_hiding_move_position_new`/`qaai_set_move_position`/`can_move`/`qaai_move_to_pos`），
+  再包单位类的 `start_move_to_cs`；**移动指令在 `unit.qaai_targets['action_policies']['move']`，不在 ai_controller 上**；`qaai_move_to_pos` 恒返回 True，要看 `start_move_to_cs` 的返回。
+- 某个返回 False 的长函数：`sys.settrace` 记 `line`/`return` 事件，直接看从哪一行返回（`start_move_to_cs` 657 行、`player_catch` 794 行都是这么定位的）。
+- 状态卡住：打印 `state_machine.state` 再按 `CIVILIAN_STATE`/`BUTCHER_STATE` 反查名字（这次是 SPAN+FALL）。
+- 原生函数：`pymethods.py <so> 方法名` → 包装函数 → 转发函数 x0 = 实现指针 → 虚调用偏移 → 名字查表外层 → 每网格对象实现（llvm-objdump 在 `%LOCALAPPDATA%\Android\Sdk\ndk\28.2.13676358\toolchains\llvm\prebuilt\windows-x86_64\bin\`）。
+
+### 9.17 调研：用真客户端的录像回放来渲染模拟对局（"方案 C"，2026-10-26，未实施）
+
+用户想要和手机上一样的局内视角。可选三档：A 白模 + 还原相机、B 解析真模型贴图（卡在 §9.8 路径哈希）、C 把模拟结果写成录像，让手机客户端播放。本节只记 C 的调研结论。
+
+**录像链路（`worlds/WorldBattleVideo.pyc`、`worlds/BattleEvent.pyc` 伪源码）**：
+- 录制：`BattleEvent.add_battle_event(event)` 是客户端收服务端消息的唯一入口，末尾调 `GK.g_WBV.append_frame(event)` 记成 `(time.time(), event)`；
+  定时 `_snapshot()` = 开局快照 `back_start_snapshot` 用 `battle_world.get_recover_info()` 更新一遍（拖进度条时从这里恢复）。
+- 回放：`play_local_video_ex(data)` → `GK.g_avatar.start_init_battle_world(start_snapshot, is_local_video=True)`（和断线重连同一条路）→
+  `recover_battle_info(start_snapshot)` → `VideoFrame.load_file` 按 `battle_frames_snapshot_<i>.txt` 读 → `VideoFrameUnit.tick_battle_event` 按时间把事件喂回 `battle_event.add_battle_event`。
+- **加载时不做完整性校验**：`load_data` = `ReplayUtils.pickle_load`（就是 pickle），`check_version` 只比 `total_info['version'] == self.version`（实测 `1.0`）；`vmap.txt` 只是 `{saved: {guuid: {timestamp, filesize}}, …}`。
+- 和服务器的交互只有两处：`_request_upload_video_url` / `notify_client_video_result`（服务器按 `battle_id` 要求上传录像，用于举报复核），`get_genius_from_server`（`ask_all_player_genius`）。
+  **伪造录像要用新的 guuid**，不要覆盖真实对局目录，免得服务器按 battle_id 要录像时把伪造内容传上去。
+
+**真录像的规模**（`6ade93e2…`，236 秒）：14 个快照文件、29283 条事件、35 种 `et`、48 种 RPC 函数。
+- `10999 COMBAT_CORE`(22845，其中 `handle_joystick_move_self_event` 19614 = 移动)、`304 SYNC_CAM`(1819，录制者相机)、`202 STATE_UPDATE`(1644，状态/动画)、`7`(874，未对上常量)、`430 PHOTO`(666)、
+  `10998 COMBAT_CORE_TIME`、`60 BUFF`、`8900 GM_ATK_RANGE`、`54 CAST_SKILL`、`82 SYNC_PRESENCE_NUM`、`204 PSU_UPDATE`、`201 HUD_MOVE_STOP`、`109 MOVE_END_DIR`、`44 ITEM`、`47 CHASE` …（常量名来自 `ComuKeys.GAME_BATTLE_EVENT_TYPE`）。
+- RPC 前几名：`get_action_rate` 1305、`handle_dir_sync_event` 327、`handle_follow_event` 254、`client_update_process`(密码机进度) 220、`set_attribute` 191、`process_root_motion_event` 96。
+- `snapshot_0.snap_shot.event_data`：60 个键（`scene_id`/出生组/`entities` 79 个/`combat_core_info`/`items_info`/`self_uid`…），求生者实体 38 个键（外观、天赋、`avatar_id` 等）。真录像正好是军工厂，可当模板。
+
+**★ 关键否定结论：模拟器里录不到这条消息流，只能合成。** 探针 `probe_events.py`（会话 scratchpad，300 帧）包住了所有出口：
+`world.battle_event` 是 None；`iLogicBase.send_battle_event` 在客户端是空函数（服务端实现在 servercommon）；300 帧里只有 `MyButcherUnit` 往服务端发的 288 条 `et=109`、
+十几次 `call_rpc`（`sync_add_component`、`client_update_process` 各一两次）。**本地服务端模式下服务端逻辑直接写客户端对象，基本不发消息。**
+→ 要按模拟器逐帧状态（位置/朝向/速度、状态机切换和参数、机进度、板窗椅门）反推出事件，格式以真录像样本 + `BattleEvent.handle_*` 处理函数为准。
+
+**风险与限制**：
+- 版本：模拟器跑的是 apk 原包脚本（06-11），手机是热更版（10-23，`res_pull/hotres/` 未解），事件格式要以热更版处理函数和真录像为准。
+- 调试是盲的：播放出错会被吞掉，手机上看不到日志；每轮都要推文件、开游戏、进录像列表。
+- 只能人看（可以录屏），给不了 RL 当画面观测；每局模拟都要推到手机上。
+- 写入 `Android/data/com.netease.dwrg/...` 要 root，并 chown 成游戏 uid（换机后是 `u0_a409`）。播放本地录像是正常功能，没看到上报；但不能保证完全没有风险。
+
+**如果要做，第一步（不写合成代码）**：① 把真录像复制成新 guuid 目录并加进 `vmap.txt`，看客户端能不能列出来、能不能播放；
+② 改其中一个求生者的全部移动事件（整体平移），看客户端是否照改后的数据渲染。两步都通过，才值得写合成器。
+
+### 9.18 性能剖析 + 3090 并行（2026-10-26；原因与优化**待仔细核实**）
+
+#### 9.18.1 为什么一局要跑这么久
+模拟时间**本来就是虚拟的**：`simcore.frame` 每帧把 `game3d` 时钟推 `DT_MS = 33.333`（30Hz），`time.time()` 已换成模拟时钟（`simpatch.install_clock`），循环里没有 sleep。
+慢只因为**算一帧的 CPU 时间超过 33ms**：噩梦编成约 0.5 倍速（一帧约 60ms）；一整局人少后会变快（§9.15 那局 1–4.6 倍速，墙钟约 3 分钟）。
+"加大步长 / 降低 AI 决策频率"能直接提速，但会改游戏逻辑时序（扫掠穿墙、AI 判定），要等多局统计校验能用了、确认分布不变再考虑，**现在不做**。
+
+#### 9.18.2 profile 实测（`profile_sim.py 300 0 60`；噩梦编成 杰克 + 4×rank7，种子 0，预热 60 帧后剖 300 帧）
+- 开 cProfile：墙钟 38.3 秒 / 模拟 10 秒（每帧 128ms，0.26 倍速；cProfile 本身让速度慢 1.5–2 倍，这一点是估计）。tick 异常 0。**进程内存峰值 363MB**。
+- **杰克 AI 占 62%**：`AIButcherJack.jack_carry_policy` 累计 20.2 秒（300 次，每帧都跑），其中
+  `check_turning → verify_model → CollisionMgr.static_test_new`（盒子重叠，1864 次）10.4 秒、`check_airpower_scene_col → check_air_power_scene_collision_for_ai → sweep_test_new → colworld.capsule_sweep`（319 次）7.8 秒。
+  4 个 rank7 求生者行为树自身合计不到 1 秒。（换杰克后从 0.7 掉到 0.5 倍速，与此吻合。）
+- **碰撞层 `colworld.py` 自身 9.6 秒（25%）+ numpy 小数组开销**：`numpy.ufunc.reduce` 134 万次共 8.7 秒（`ndarray.min/max` 各 52 万次，主要来自 colworld）；
+  `colworld._dyn_merged` 1.1 万次、累计 11.2 秒（`_candidates` 11.9、`_box_query` 11.4）；`_pt_tris` 累计 3.8 秒、`colworld.__init__`（某个小类）5552 次累计 4.9 秒。
+- **导航不是瓶颈**：`natives/detour.py` 自身合计 0.5 秒。（原 §9.6.3-3 猜"导航每帧上百次是瓶颈"是错的。）
+- 其它：`natives/math3d.py` 自身 2.5 秒（`vector.__init__` 78 万次）；`BaseUnit.get_position3` 32 万次 1.4 秒；`natives/world.py.__getattr__` 35 万次 0.9 秒。
+
+#### 9.18.3 原因假设与优化候选（**全部待仔细核实，未改代码**）
+| # | 假设 | 怎么核实 |
+|---|---|---|
+| 1 | `_dyn_merged` 每次查询都重新拼动态体三角形（板/窗/门/角色绝大多数帧没动） | 读 `colworld.py:328` 附近代码，确认是否已按标脏缓存；统计每帧真正变化的动态体个数 |
+| 2 | 碰撞内核对几个元素的小数组调 numpy（min/max/stack/norm），固定开销大于计算本身 | 定位 134 万次 `reduce` 的调用者（`pstats` 的 `print_callers`）；对拍纯 Python 版耗时 |
+| 3 | 杰克 `jack_carry_policy` 每帧都跑 `check_turning`/雾刃场景碰撞检查——要确认这是行为树本来的频率，还是模拟器状态（如扛人/雾刃状态卡住）让它每帧走这条分支 | 看 `AIButcherJack.check_turning`/`check_airpower_scene_col` 的调用条件（`pseudo.py`），对照当时杰克状态；换监管（如 `qaai_butcher_common`）对比 |
+| 4 | 不开 cProfile 的真实倍速、其它种子/对局阶段（追人/挂椅/开门）分布是否一样 | 多个种子、不同起始帧各剖一次，再用不带剖析的 `run1v4.py` 对比墙钟 |
+
+优化候选（核实后再定、先跟用户确认）：动态体合并结果按标脏缓存；小数组改纯 Python 或批量向量化。只动碰撞内核、不动游戏逻辑，
+用 `t_colworld.py`/`t_physx.py` 对拍 + `t_determinism.py` 逐帧一致验证。若碰撞那约 60% 快 3–4 倍，整体约快 2 倍（估计，未测）。
+
+#### 9.18.4 ★ 3090 服务器（`jing3090`）：**之后需要并行加速的命令都放这台跑**
+- 连接：本机 `ssh gpu`（免密，`-o BatchMode=yes` 可用）。
+- 规格（2026-10-26 实测）：i7-12700K **12 核 20 线程**、内存 31GB（可用约 29GB）、Swap 7GB、磁盘可用 762GB、RTX 3090 24GB 显存。
+  **3090 的 24GB 是显存，模拟器是纯 Python CPU 计算，用不到 GPU**；GPU 留给之后 RL 策略网络训练。并行吞吐看 CPU 核数：每局一个进程（峰值约 360MB），内存不是限制，并发上限按核数约 12–16（扩展性待实测）。
+- Python：系统是 3.12；**模拟器要 3.11**（`std_pyc` 是 3.11 字节码）→ 用 `~/.local/bin/uv`（不在非交互 shell 的 PATH 里，写全路径）装 3.11 和 numpy。
+- 这台机也跑 pi05 VLA 实验（共用）：开大批量前先看 `uptime` / `nvidia-smi` 负载。
+- **尚未部署**。要做的：传 `std_pyc/`、`drivers/sim/`、模拟用到的 `res_pull` 资源（`resdump_1025_015456/res_recovered.zip`、`animdb/` 等，按实际读取清单传，不整个 res_pull）；
+  Linux 上重编 `natives/detour_c/build.py`、`natives/acl_c/build.py`；查路径里的 Windows 写法；`PYTHONHASHSEED=0` + 种子保证与本机结果一致（部署后用 `t_determinism` 对拍本机轨迹）。
+- 多进程并行脚本：**未写**（计划：每局一个子进程，`--jobs N`，子进程输出一行 JSON 汇总 = 结局/时长/机进度/异常数/轨迹哈希，父进程汇总胜负与时长分布）。
+
 
 ## 8. 免责
 

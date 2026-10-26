@@ -10,7 +10,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--child":
     from simcore import SimCore
     core = SimCore(verbose=False, server_ai=True, seed=seed)
     import sim1v4
-    w = sim1v4.make_1v4(core, 1)
+    w = sim1v4.make_1v4(core)
     traj = []
 
     def cb(i):

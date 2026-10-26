@@ -15,7 +15,7 @@ SEED = int(ARGS[2]) if len(ARGS) > 2 else 0
 core = SimCore(verbose="--verbose" in sys.argv, server_ai=True, seed=SEED)   # --verbose：打印每种被吞异常第一次的调用栈
 import sim1v4
 from common_cs.states.StatesConst import CIVILIAN_STATE
-w = sim1v4.make_1v4(core, 1)
+w = sim1v4.make_1v4(core)
 t0 = core.real_time()
 
 

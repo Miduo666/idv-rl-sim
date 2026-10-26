@@ -147,6 +147,20 @@ class rotation(object):
         return m
     def rotate_vector(self, v): return self.to_matrix().transform_normal(v)
 
+    def get_axis_angle(self):
+        """-> (轴 vector, 角 弧度)。用法 AirPower.tick_trace_direction：axis, angle = rot.get_axis_angle()。"""
+        w = max(-1.0, min(1.0, self.w))
+        s = math.sqrt(max(0.0, 1.0 - w * w))
+        ang = 2.0 * math.acos(w)
+        if s < 1e-9:
+            return vector(1.0, 0.0, 0.0), 0.0
+        return vector(self.x / s, self.y / s, self.z / s), ang
+
+    def set_axis_angle(self, axis, ang):
+        """就地设为绕 axis 转 ang（AirPower / iLogicTramcar：rotation(1,0,0,0) 造出来后立刻 set_axis_angle 覆盖）。"""
+        r = rotation.from_axis_angle(axis, ang) if vector(axis).length > 1e-12 else rotation()
+        self.x, self.y, self.z, self.w = r.x, r.y, r.z, r.w
+
     def slerp(self, a, b, t, shortest=True):
         """就地：self = slerp(a, b, t)。用法见 CamModeBase._get_tran_interp: rot1.slerp(rot1, rot2, ratio, True)"""
         ax, ay, az, aw = a.x, a.y, a.z, a.w
@@ -231,6 +245,18 @@ class matrix(object):
         return r
     @staticmethod
     def make_rotation(axis, ang): return rotation.from_axis_angle(axis, ang).to_matrix()
+    @staticmethod
+    def make_rotation_between(a, b):
+        """把方向 a 转到方向 b 的旋转矩阵（a·M ∥ b，最短弧）。用法 AirPower.tick_trace_direction(now_dir, dir3) 后接
+        matrix_to_rotation → get_axis_angle → slerp 按比例转向。共线同向 = 单位阵；反向 = 绕任一垂直轴转 π（推断）。"""
+        a = vector(a).normalized(); b = vector(b).normalized()
+        d = max(-1.0, min(1.0, a.dot(b)))
+        ax = a.cross(b)
+        if ax.length < 1e-9:
+            if d > 0:
+                return matrix()
+            ax = a.cross(vector(1, 0, 0)) if abs(a.x) < 0.9 else a.cross(vector(0, 1, 0))
+        return rotation.from_axis_angle(ax, math.acos(d)).to_matrix()
     @property
     def rotation(self):
         # NeoX：matrix.rotation 是去掉平移的旋转部分（仍是矩阵），四元数要再过 math3d.matrix_to_rotation
