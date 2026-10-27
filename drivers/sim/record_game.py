@@ -87,9 +87,18 @@ def static():
             "switches": [item(u) for u in um.get_switch_units()]}
 
 
+STALL_S = 60.0     # 角色位置/状态标签/机进度连续这么久全不变 → 判卡死提前结束（之前两局各白跑到 20 分钟上限）
+
+
+def stall_key(fr):
+    return (tuple((c["uid"], round(c["pos"][0]), round(c["pos"][2]), tuple(c["tags"])) for c in fr["chars"]),
+            tuple(g[1] for g in fr["gens"]), tuple(d[1] for d in fr["doors"]))
+
+
 f = open(OUT, "w", encoding="utf-8")
 started, done, end_at = False, 0, None
 civ_uids = []
+last_key, last_change = None, 0.0
 while done < MAXF:
     core.run(EVERY)
     done += EVERY
@@ -100,7 +109,16 @@ while done < MAXF:
         f.write(json.dumps(static(), ensure_ascii=False) + "\n")
         civ_uids = [u.uid for u in core.characters() if u.uid != 1]
     t = done * simcore.DT_MS / 1000.0
-    f.write(json.dumps(frame(t), ensure_ascii=False) + "\n")
+    fr = frame(t)
+    f.write(json.dumps(fr, ensure_ascii=False) + "\n")
+    k = stall_key(fr)
+    if k != last_key:
+        last_key, last_change = k, t
+    elif t - last_change >= STALL_S:
+        print("卡死 @ 模拟 %.1f 秒：自 %.1f 秒起位置/状态/机进度都没变，提前结束" % (t, last_change), flush=True)
+        for c in fr["chars"]:
+            print("   uid %d pos %s tags %s policy %s anim %s" % (c["uid"], c["pos"], c["tags"], c["policy"], c["anim"]), flush=True)
+        break
     alive = {u.uid for u in core.characters()}
     if end_at is None and all(uid not in alive or getattr(w.unit_mgr.get_unit(uid), "is_leave", False) for uid in civ_uids):
         end_at = done

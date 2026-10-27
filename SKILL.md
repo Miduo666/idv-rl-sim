@@ -667,6 +667,7 @@ machineId(`4E45-…` 格式,`4E45`=ASCII "NE")= acsdk native 内部生成。`neo
 **性能（§9.18）**：噩梦编成约 0.5 倍速，profile 显示主要耗时在碰撞层（杰克 AI 的查询），原因与优化待核实；批量/并行运行放 3090（`ssh gpu`，未部署）。
 **2026-10-26 晚更新（§9.16）：之前用错了人机、难度没生效、所有 Buff 半初始化；已换成噩梦编成并补一批缺口，挨刀逃跑/救人都正常了。**
 **2026-10-27（§9.19）：代码已提交；天赋缺口定位到"建单位没传 genius_id_lvs"、真值需人机录像；隔墙对峙定性为游戏 AI 缺陷；雾刃随普攻正常生成。交接点 = §9.19。**
+**2026-10-27 晚（§9.20）：路线改为优化行为树（先杰克，指标=首次击倒用时）；人机 AI 三族分类；大师杰克（`SIM_JACK=master`）跑通 + `first_down.py`；用户指出雾刃计数有问题待查。交接点 = §9.20。**
 
 以下是 2026-10-25 的记录：
 - **碰撞层完成**：`.scn_col` 静态网格 + 板/窗/门/角色等动态体，射线、扫掠、静态测试、路径相交全部接上游戏的 `CollisionManager`，
@@ -1205,7 +1206,7 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
   Linux 上重编 `natives/detour_c/build.py`、`natives/acl_c/build.py`；查路径里的 Windows 写法；`PYTHONHASHSEED=0` + 种子保证与本机结果一致（部署后用 `t_determinism` 对拍本机轨迹）。
 - 多进程并行脚本：**未写**（计划：每局一个子进程，`--jobs N`，子进程输出一行 JSON 汇总 = 结局/时长/机进度/异常数/轨迹哈希，父进程汇总胜负与时长分布）。
 
-### 9.19 ★ 天赋来源 / 隔墙对峙定性 / 雾刃核实（2026-10-27，**下个会话从这里接**）
+### 9.19 ★ 天赋来源 / 隔墙对峙定性 / 雾刃核实（2026-10-27；后续见 §9.20）
 
 **进度**：§9.16.7 那批改动已提交（`ebddf9b`，提交前 `t_determinism.py 300 0` 逐帧一致）。§9.16.7 建议顺序：① 已做；② 天赋查清来源、**等真值**；③ 已定性；④ 剩一人不逃生 = 杰克没抓住、600 秒超时，用户说不严重、**跳过**；⑤ 多种子统计、⑥ 原生录像未做。
 
@@ -1233,6 +1234,11 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
     （`is_self`）建施法指示器，其它单位为 None、cast 时跳过；模拟器里"自己"是人机杰克 → 走进了玩家 UI 路径。
     修法：`sim1v4._ai_self_no_casting_indicator` 包 `init_casting_indicator`，`WorldSim1v4.self_is_ai()` 为真时置 None（计数）。
     复跑：65.5 秒放出闪现（冷却 150 开始走），之后继续追击；`t_determinism.py 300 0` 一致。
+  - **★ 律师翻板卡死（已修）**：修好闪现后第二局（`seed0_genius_fixed.jsonl`）150 秒起杰克 `catch` 原地 idle 到 20 分钟上限。
+    根因与 §9.16 律师翻窗同构：律师（pid 15）翻板 `LStateCivilian.enter_state(SPAN_PANEL)` 第 3304 行调 `PanelUnit.check_lawyer_span_panel`（服务端方法，
+    客户端没有）→ 抛 → SPAN_PANEL 挂着不退出，律师卡在板上原地"跑"，被砍倒后扛不起来。全脚本只此一处语句调用、返回值不用 → `sim1v4._panel_check_lawyer_span` 空操作计数。
+    探针（会话 scratchpad `lawyer_stuck.py`）：129.67 秒抛出，同帧进入 SPAN_PANEL，位置 (928.0, 998.8) 此后不变。
+  - `record_game.py` 加卡死检测：角色位置/状态标签/机进度/门进度连续 60 秒全不变 → 打印各角色状态并提前结束。
   - 版本差：apk 原包配表里天赋 28（劳有所得）→ 被动 **122**；`idv-replay-genius/genius-table.md` 记的 400 是 9-22 热更版。模拟器跑原包脚本，按 122。
 - **真值来源**：录像开局快照每个角色实体都有 `genius_id_lvs`、`support_skill_id`、`is_bot`（现有录像 `6ade93e2…` 5 人全是真人，用不上）。需要一局**有人机参与**的录像（例如自定义房噩梦、用户当求生者，对手杰克人机 + 3 个求生者人机），拉回后读快照即可，不用逆服务端。**待用户决定。**
 
@@ -1250,6 +1256,52 @@ findNearestPoly(中心=(x,y,z), 半尺寸=(ext.x×s, 4000, ext.z×s), filter=mes
 - 未做：雾刃飞行/命中是否与真机一致（`AirPower.tick_trace_direction` 已补的数学函数见 §9.16 表）。
 
 **下一步（先跟用户确认）**：天赋 + 辅助特质真值（需要一局人机录像）→ 按快照传 `genius_id_lvs`/`support_skill_id`；多种子统计（3090 部署 + 并行脚本，§9.18.4）；原生录像（§9.17）。
+
+### 9.20 ★ 路线改为"优化行为树"、人机 AI 三族分类、大师杰克跑通（2026-10-27，**下个会话从这里接**）
+
+**路线决定（用户 2026-10-27）**：个人做强化学习硬件/时间不够（绝悟 1v1 单英雄就用 1.8 万 CPU 核 + 48 张 P40，3090 那台是 20 线程，差约 1000 倍），
+改为**调行为树参数 + 加/修分支**；先从**杰克**开始。**评估指标先用"首次击倒用时"**（用户定；需多种子取分布，只反映追击开局）。
+
+**1. 树和控制器是两层**：`bt_code/*.pyc` 只是流程骨架（每帧按序调 `ac.*` 方法），逻辑在控制器类。控制器按 pid 选（`QAAIFactory.CONTROLLER_MAP`，杰克 → `QAAIButcherJack`），树决定调哪组方法。
+树结构用 `drivers/sim/bt_tree.py <pseudo.py 输出>` 打成缩进大纲（SEQ/SEL/叶子 + 节点常量参数）。继承：
+`AIBase → AIButcher`（209 个方法，其中 138 个 `qaai_*`）`→ AIButcherJack`（噩梦杰克专属）；`AIButcher → QAAIButcher`（策略模块版）`→ QAAIButcherJack / QAAIButcherMary / …`。
+
+**2. 监管人机按"逻辑写在哪"分三族**（全部 `qaai_butcher_*` 树逐个归类过）：
+| 族 | 逻辑在哪 | 树 |
+|---|---|---|
+| ① qaai 方法族 | `AIButcher.qaai_*`：定大策略（CarryingCivilian/HangHook/Guard[/Patrol]）→ `qaai_make_action_policy` → `qaai_make_civilian_adaptation` → 动作节点 | ①a 噩梦树 `qaai_butcher_hard/tentacle/mouth/imper/dark_crow1–4`（入口 `QaaiMakeGlobalPolicy`）；①b `*_player0–3` 系列（前面多"局势判断 `qaai_calculate_situation` + 选目标"）：mary/tentacle/imper/claspman/treeboy/dark_crow，登记在 `AIConst.AI_BUTCHER_LEVEL_MAP`（带 warm_num/safe_num，推断是匹配温暖局人机，未核实） |
+| ② 策略模块族 | `QAAIButcher` + `ai_env_unit/butcher/{policy,adapters,components,utils}`（Patrol/Carry/Hook/Guard 策略；Checker/Processer 按求生者技能适配；`OscillationDetection` 防死循环） | `qaai_butcher_common`：所有能当自定义人机的监管**新手/专家/大师三档都用它**，难度只靠 `pydata/match_ai_butcher_param[pid][210+档]` |
+| ③ 杰克专属 | `AIButcherJack`（`jack_carry/hook/guard_policy` 三个大函数） | `qaai_butcher_jack`，只有噩梦杰克 |
+- 杰克没有①的树，只有②（大师）③（噩梦）。中文角色名只确定 mary=红夫人、imper=宿伞之魂，其它按文件名。
+- **红夫人"会用技能"是手写几何，不是学的**：镜子放在自己与目标 1 秒后预测点的中点 + 随机偏差（参数 `mirror_pos`），镜像按镜面直线精确反射，镜像离人 <80 且镜子剩 >2 秒就用镜像追，另有换位/转镜判断。同一逻辑①（`AIButcher.qaai_carrying_mary/qaai_make_action_policy_mary/qaai_mary_guard`）②（`QAAIButcherMary`）各写一份。
+  客户端脚本搜过无任何神经网络/模型推理痕迹（服务端不可见，不能完全排除）。
+
+**3. 求生者 rank7 树（297 节点）三层**：房间级团队打分 `AIEnvCombatUtility.cal_score` → 每人取 fix/rescue/treat/ground/treated/escape 中最高分目标（`qaai_get_globaltarget`，一台机超站位数扣 50 分防扎堆）；
+树 n6 按固定优先级选全局策略（逃生 > 自救 > 慌了 HIDING > 门快开完守门 > 不危险时[疗伤 > 救人 > 修机 > 开门 > 逃] > 危险时[救人 > 溜鬼 > 逃]）；n81 把策略翻成动作 + 按 pid 的技能分支。救人时机是公式 `T_diff = 距离/45 − (挂椅剩余 − …)`。每帧重算、无保持时间。
+
+**4. 杰克板区诊断（代码层面，模拟器未逐条实测）**：
+- 噩梦 `jack_carry_policy`：`Cleaver.diff_knife` 判"板区博弈"（45 内立着/正在放的板、求生者先到板、两人异侧）→ 为真时**整段雾刃逻辑（交互/隔墙/直线）被跳过**；
+  `Cleaver.choose_knife_type` 对杰克只要 `can_use_fog_air_power` 就**直接返回 BOARD（压板刀：走到求生者侧板边，预计到达前 0.35–0.47 秒挥刀）**，绕过刀型概率表 → "被砸后该刀型概率 −0.1"的自适应（`dynamic_modify_knife_pro`）对杰克无效。
+- 踩板/绕路已有 `cal_detour_path_with_panel`：只看最近已放下的板（150 内），踩板时间 = (到板 + 板后到人)/速度 + 2.42 秒 vs `walk_panel=False` 绕路；结果经 `panel_mask` → BaseMove `set_panel_detour_mask`（语义与模拟器里板子 poly 标志是否生效**未验证**）。
+- 大师 `CarryPolicy` 独有：`not_best_path_chase`（80 内每 5 秒按概率去短板区或沿 `MinerShadowMgr` 轮廓截路）；`OscillationDetection`。大师雾刃函数与噩梦基本同一份代码 + 参数化。
+- 用户提的权衡（做成决策节点，**未写**）：板区里比较 A 冲板（失败概率 ×(眩晕 + 重新拉近)）/ B 板外等能量放隔墙或交互雾刃（(阈值−当前能量)/10 秒 × 命中率）/ C 绕路截路，取期望时间最短。
+- 杰克 213 档（`match_ai_butcher_param[30][213]`，`get_skill_level_param`：bt_arg1..9 → start_cast_fog_time/fog_cd/fog_offset/fog_miss_prob/fog_in_guard/fog_delay/fog_dis_min/fog_dis_max/fog_ex）：
+  fog_ex 1（隔墙开）、fog_cd 3、fog_miss_prob 0.1（故意打偏）、fog_dis 0–210、is_in_panel 1、cleaver_prob (0.7,0.3)、not_best_path_chase (5,0.1)。212 档 fog_ex 0。噩梦 `AIButcherJack.but_level` = 默认 10，无这些参数。
+
+**5. 大师杰克跑通（代码未提交）**：
+- `sim1v4.WorldSim1v4Master`：BUTCHER = (30, `qaai_butcher_common`)，`player_set_ai_level = (LV_3, LV_4)` → `QAAIButcher.set_level` 得 213；求生者不变。`JACK_VARIANTS` + 环境变量 **`SIM_JACK=master|nightmare`**（默认 nightmare，所有驱动脚本通用）；`WorldSim1v4.__init__` 改为读 `type(self).player_set_ai_level`。
+- 冒烟 `run1v4.py 6 450 --server-ai`：控制器 `QAAIButcherJack`、tick 异常 0、会追人出刀被砸。
+- **`first_down.py [种子] [上限秒]`**：跑到第一个求生者 FALL，输出一行 `RESULT {json}`（首次击倒秒、受害者、击倒前 stuns/attacks/fogs、控制器、but_level、雾刃参数、被吞异常前 6）。墙钟约 0.5 倍速，一局最多 6–8 分钟。
+- 种子 0（上限 240 秒）：噩梦 110.1 秒击倒 c140、stuns 5、attacks 7、fogs 0；大师 240 秒未击倒、stuns 3、attacks 7、fogs 1（90 秒复跑：大师 3/6/1，噩梦 4/4/0）。
+- **★ 用户指出数据有问题（原话）："雾刃CD20秒一次，CD一好普通攻击就会触发雾刃，普攻7次不可能雾刃0或1次，下次查吧"**。
+  → 下次先查计数本身：`fogs` 数的是 `unit_mgr.get_units_by_type(UNIT_TYPE_CONF.AIRPOWER)` 新 uid（大师 `cast_skill_in_carry` 自己也这么查），但 §9.19 实测雾刃是逻辑层 `LAirPower`（`AirPowerFogHitNew`），可能不进单位表；
+  `attacks` 数的是杰克进入 `BUTCHER_STATE.SKILL_ATTACK` 的次数，`stuns` 数进入 `HIT_BY_PANEL`，都没交叉核对。也要排除模拟器里能量回复/`check_jack_energy_buff` 换 nc_dct 本身没生效。**在这之前 first_down 的 stuns/attacks/fogs 都不可信，first_down_s 也待核。**
+- 大师杰克被吞 `TypeError None/int`（`QAAIButcherJack.find_move_unit` 第 459 行）：90 秒 642 次调用失败 29 次，**全是窗 uid 76**（中心 (1878.7, 0, 971.6)）——`modify_detour_pos` 取不到窗中心高度。
+  量过（scratchpad `navdist_probe.py`）：43 块板中心 42 块在 AI 网格上；17 扇窗离 AI 网格 8.5–9.7（box 半径 6 命中 12 扇、8 才命中其余 5 扇），超出回退吸附 6。与 §9.14 躲藏目标 None 同根。
+  修法待用户定：A 找回真 tilecache（§9.6.3-4）/ B 回退高度吸附放宽到 10（近似，影响双方）/ C 暂不动记偏差（我建议 C + 先部署 3090 拿基线）。
+- ⚠ 工作区里还有**另一会话未提交的改动**：`sim1v4._panel_check_lawyer_span`（律师翻板卡死修复）、`record_game.py` 卡死检测、SKILL §9.19 两条。本节种子 0 那几局是否已含律师翻板修复不确定（改动时间未对上），对照前要重跑。
+
+**下个会话顺序（先跟用户确认）**：① 查雾刃/普攻/被砸计数（用户点名）；② 提交两边未提交改动（先 `t_determinism.py 300 0`）；③ 3090 部署 + 并行跑多种子首次击倒基线（噩梦 vs 大师）；④ 窗户导航修法 A/B/C；⑤ 板区决策节点（A/B/C 期望时间）与移植大师防死循环/截路。
 
 ## 8. 免责
 

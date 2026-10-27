@@ -3,7 +3,7 @@
     core = SimCore(); import sim1v4; w = sim1v4.make_1v4(core); core.run(300)     # 默认场景 6 = 正式对局军工厂
 （本模块顶层就 import 游戏脚本，必须在 SimCore() 设好 sys.path/打桩之后再导入）
 人机 AI(qaai_*) 原本跑在服务端房间里；服务端房间/单位的少量方法客户端脚本里没有，按调用处语义补在 ServerRoomShim。"""
-import math, random, collections
+import math, os, random, collections
 import game_kernel as GK
 import math3d
 from common_cs import ComuKeys
@@ -171,6 +171,12 @@ def _wood_check_lawyer_span(self, uid, lawyer_map_span=False):
     SHIM_STATS["wood.check_lawyer_span_wood(律师翻窗,空操作)"] += 1
 
 
+def _panel_check_lawyer_span(self, uid, lawyer_map_span=False):
+    # 翻板版的同一个服务端方法：全部脚本只有 LStateCivilian.enter_state（SPAN_PANEL，律师 pid 15 翻板）一处语句调用，返回值不用。
+    # 缺它时 SPAN_PANEL 进到一半抛 → 状态挂着永不退出、律师卡在板上；被砍倒后监管 catch 原地 idle，整局卡到时长上限（§9.19）。
+    SHIM_STATS["panel.check_lawyer_span_panel(律师翻板,空操作)"] += 1
+
+
 def _with_server_butcher_speed(fn):
     # 服务端单位的 .speed = 配表 move_speed（求生者 CivilianUnit.__init__ 就这么置）；但客户端"自己"(MyButcherUnit) 的 .speed 是
     # 摇杆当前速度：MoveUnit.set_speed/get_speed、BattlePlayerUnit.fix_hud_move_speed 每帧写，停下时 0/None。
@@ -241,6 +247,9 @@ def install_unit_shims():
         WoodUnit.wood_oneway_tag = property(_wood_oneway_tag)
     if not hasattr(WoodUnit, "check_lawyer_span_wood"):
         WoodUnit.check_lawyer_span_wood = _wood_check_lawyer_span
+    from ClientUnits.PanelUnit import PanelUnit
+    if not hasattr(PanelUnit, "check_lawyer_span_panel"):
+        PanelUnit.check_lawyer_span_panel = _panel_check_lawyer_span
 
 
 class ServerRoomShim(object):
@@ -343,7 +352,7 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
     def __init__(self):
         super(WorldSim1v4, self).__init__()
         self.room_type = ServerRoomShim.room_type      # WorldBase.__init__ 置了 None
-        self.player_set_ai_level = ServerRoomShim.player_set_ai_level
+        self.player_set_ai_level = type(self).player_set_ai_level   # 子类（编成变体）可覆盖难度
         # 只有 NOVICE_BATTLE/STORY_BATTLE 等类型会置 is_battle_client（本地服务端）；BATTLE 会被当成联网对局
         self.world_type = ComuKeys.GAME_WORLD_TYPE.NOVICE_BATTLE
         self.rng = random.Random(0)
@@ -479,16 +488,31 @@ class WorldSim1v4(ServerRoomShim, WorldBattleClientBase):
                 u.change_ai(bt)
 
 
+class WorldSim1v4Master(WorldSim1v4):
+    """对照组：杰克换自定义房"大师"档。player_ai_conf[30].custom_ai 三档都是通用树 qaai_butcher_common，
+    控制器由 QAAIFactory 按 pid 选 QAAIButcherJack；QAAIButcher.set_level 在自定义房取 210 + player_set_ai_level[0]
+    → LV_3 = 213，参数读 match_ai_butcher_param[30][213]。求生者编成与难度不变（[1] 仍是 LV_4 噩梦 rank7）。"""
+    BUTCHER = (30, "qaai_butcher_common")
+    player_set_ai_level = (ComuKeys.CUSTOM_AI_LEVEL.LV_3, ComuKeys.CUSTOM_AI_LEVEL.LV_4)
+
+
+# 监管编成变体，环境变量 SIM_JACK 选（默认 nightmare），所有驱动脚本通用
+JACK_VARIANTS = {"nightmare": WorldSim1v4, "master": WorldSim1v4Master}
+
+
 def utils_fixed_pos(pos_rot, scene_id):
     from common_tools import utils
     return utils.fixed_ow_scene_offset(pos_rot, scene_id)
 
 
-def make_1v4(core, scene_id=None, world_cls=WorldSim1v4):
+def make_1v4(core, scene_id=None, world_cls=None):
     # 默认 = 正式对局军工厂 scene_config[6]（ComuKeys.SCENE_ID.FACTORY）。scene_config[1] 是新手版军工厂（同一套资源、pos_info 相同），
     # 但 AI 的按图数据表只有 6 → 用 1 时绕板/心理战/躲藏数据全缺（§9.16）。
     if scene_id is None:
         scene_id = ComuKeys.SCENE_ID.FACTORY
+    if world_cls is None:
+        world_cls = JACK_VARIANTS[os.environ.get("SIM_JACK", "nightmare")]
+        core._log("[1v4] 监管编成 %s：%s" % (world_cls.__name__, world_cls.BUTCHER))
     import world as _world
     install_unit_shims()
     n = _world.register_scene_models(GK.DM.pos_info.get(scene_id, {}))
