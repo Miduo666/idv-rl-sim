@@ -87,18 +87,39 @@ def static():
             "switches": [item(u) for u in um.get_switch_units()]}
 
 
-STALL_S = 60.0     # 角色位置/状态标签/机进度连续这么久全不变 → 判卡死提前结束（之前两局各白跑到 20 分钟上限）
+STALL_S = 60.0     # 连续这么久：每个角色活动范围都不超过 STALL_R、状态标签/机进度/门进度都没变 → 判卡死提前结束
+STALL_R = 15.0     # 只比"坐标完全不变"会漏掉原地小幅来回的循环（seed0_genius_v3：杰克每 10 帧前进 3–6 再被拉回，§9.19）
 
 
 def stall_key(fr):
-    return (tuple((c["uid"], round(c["pos"][0]), round(c["pos"][2]), tuple(c["tags"])) for c in fr["chars"]),
+    return (tuple((c["uid"], tuple(c["tags"])) for c in fr["chars"]),
             tuple(g[1] for g in fr["gens"]), tuple(d[1] for d in fr["doors"]))
+
+
+class StallWatch(object):
+    def __init__(self):
+        self.key, self.since, self.box = None, 0.0, {}
+
+    def update(self, fr):
+        """返回卡住的起始秒数，或 None。"""
+        t, k = fr["t"], stall_key(fr)
+        moved = False
+        for c in fr["chars"]:
+            x, z = c["pos"][0], c["pos"][2]
+            b = self.box.setdefault(c["uid"], [x, x, z, z])
+            b[0], b[1], b[2], b[3] = min(b[0], x), max(b[1], x), min(b[2], z), max(b[3], z)
+            moved |= b[1] - b[0] > STALL_R or b[3] - b[2] > STALL_R
+        if k != self.key or moved:
+            self.key, self.since = k, t
+            self.box = {c["uid"]: [c["pos"][0]] * 2 + [c["pos"][2]] * 2 for c in fr["chars"]}
+            return None
+        return self.since if t - self.since >= STALL_S else None
 
 
 f = open(OUT, "w", encoding="utf-8")
 started, done, end_at = False, 0, None
 civ_uids = []
-last_key, last_change = None, 0.0
+stall = StallWatch()
 while done < MAXF:
     core.run(EVERY)
     done += EVERY
@@ -111,11 +132,9 @@ while done < MAXF:
     t = done * simcore.DT_MS / 1000.0
     fr = frame(t)
     f.write(json.dumps(fr, ensure_ascii=False) + "\n")
-    k = stall_key(fr)
-    if k != last_key:
-        last_key, last_change = k, t
-    elif t - last_change >= STALL_S:
-        print("卡死 @ 模拟 %.1f 秒：自 %.1f 秒起位置/状态/机进度都没变，提前结束" % (t, last_change), flush=True)
+    since = stall.update(fr)
+    if since is not None:
+        print("卡死 @ 模拟 %.1f 秒：自 %.1f 秒起每人活动范围 ≤%.0f、状态/机进度都没变，提前结束" % (t, since, STALL_R), flush=True)
         for c in fr["chars"]:
             print("   uid %d pos %s tags %s policy %s anim %s" % (c["uid"], c["pos"], c["tags"], c["policy"], c["anim"]), flush=True)
         break
